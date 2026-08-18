@@ -1417,22 +1417,24 @@ async function generateRoute(){
   if(spanHours > 15){
     html += `<div class="group-warn" style="margin-bottom:10px;">⚠️ 這個行程排下來大約要 ${spanHours.toFixed(1)} 小時，單日恐怕太趕，建議拆成兩天，或移除部分景點。</div>`;
   }
-  html += renderTimetable(tt);
 
-  // Google Maps 路線導航連結：讓使用者可以直接把排好的順序帶進 Google Maps App／網站開始導航
+  // Google Maps 路線導航連結：放在時間表「上方」而不是最下面——手機上時間表一長，按鈕放最後很容易被捲動捲過去、完全看不到
   const gmapsUrl = buildGoogleMapsDirectionsUrl(dep, order);
   const hasFerryLeg = order.some(l=>l.crossesIsland);
   if(gmapsUrl){
-    html += `<button type="button" class="generate-btn gmaps-btn" id="openInGoogleMapsBtn" style="background:#fff;color:#1a73e8;border:1.5px solid #1a73e8;margin-top:10px;">🗺️ 在 Google Maps 開啟這條路線導航</button>`;
+    html += `<button type="button" class="generate-btn gmaps-btn" id="openInGoogleMapsBtn" style="background:#fff;color:#1a73e8;border:1.5px solid #1a73e8;margin-bottom:12px;">🗺️ 在 Google Maps 開啟這條路線導航</button>`;
     if(hasFerryLeg){
-      html += `<div style="font-size:11.5px;color:var(--ink-400);margin-top:6px;line-height:1.6;">⚠️ 此行程含跨海／跨島路段（船班或航班），Google Maps 開車導航無法規劃該段，開啟後請自行查詢船班／航班銜接。</div>`;
+      html += `<div style="font-size:11.5px;color:var(--ink-400);margin-bottom:12px;line-height:1.6;">⚠️ 此行程含跨海／跨島路段（船班或航班），Google Maps 開車導航無法規劃該段，開啟後請自行查詢船班／航班銜接。</div>`;
     }
   }
 
+  html += renderTimetable(tt);
   resultEl.innerHTML = html;
   if(gmapsUrl){
     document.getElementById('openInGoogleMapsBtn').onclick = ()=> window.open(gmapsUrl, '_blank', 'noopener');
   }
+  // 產生完自動把畫面捲到結果最上方（按鈕所在處），避免使用者留在上面的表單區、以為沒有反應
+  resultEl.scrollIntoView({behavior:'smooth', block:'start'});
 
   // Summary
   const days = Math.max(1, Math.ceil(spanHours/14)); // 以「一天大約可安排 14 小時（含用餐）」概算建議天數
