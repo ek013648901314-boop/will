@@ -1,0 +1,20 @@
+{
+  "name": "台灣趣旅行 Taiwan Trip Planner",
+  "short_name": "台灣趣旅行",
+  "description": "探索地點、AI 對話式規劃、行程路線建議的互動旅遊規劃原型",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6faf9",
+  "theme_color": "#0b3d4a",
+  "lang": "zh-Hant-TW",
+  "dir": "ltr",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

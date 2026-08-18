@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>台灣旅遊規劃器｜互動原型 Demo</title>
+<meta name="description" content="台灣趣旅行：探索地點、AI 對話式規劃、行程路線建議的互動旅遊規劃原型，支援手機安裝為 App。">
+<meta name="theme-color" content="#0b3d4a">
+<meta name="color-scheme" content="light">
+<!-- PWA / 加到主畫面 相關設定 -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="台灣趣旅行">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root{
+    --sea-900:#0b3d4a;
+    --sea-700:#0f5c72;
+    --sea-500:#1789a3;
+    --sea-300:#5db8cf;
+    --sea-100:#e6f5f8;
+    --sun-500:#f4a340;
+    --sun-600:#e08a1f;
+    --ink-900:#1c2b30;
+    --ink-600:#4d6066;
+    --ink-400:#7c9096;
+    --line:#dbe7ea;
+    --bg:#f6faf9;
+    --card:#ffffff;
+    --good:#2f9e5c;
+    --warn:#e0a51c;
+    --bad:#d1495b;
+    --radius:14px;
+    --shadow:0 2px 10px rgba(11,61,74,0.08);
+    --bottom-nav-h:60px;
+    --safe-t:env(safe-area-inset-top,0px);
+    --safe-b:env(safe-area-inset-bottom,0px);
+    --safe-l:env(safe-area-inset-left,0px);
+    --safe-r:env(safe-area-inset-right,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;overscroll-behavior-y:none;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    background:var(--bg);
+    color:var(--ink-900);
+    -webkit-touch-callout:none;
+  }
+  a{color:inherit;}
+  button{font-family:inherit;cursor:pointer;touch-action:manipulation;}
+  input,select,textarea{font-family:inherit;font-size:16px;} /* 16px 避免 iOS Safari 自動放大輸入框 */
+
+  /* ---------- App shell ---------- */
+  .app{display:flex;flex-direction:column;height:100vh;height:100dvh;}
+  header.topbar{
+    background:linear-gradient(120deg,var(--sea-900),var(--sea-700) 60%,var(--sea-500));
+    color:#fff;
+    padding:calc(12px + var(--safe-t)) 16px 12px;
+    display:flex;
+    align-items:center;
+    gap:18px;
+    flex-wrap:wrap;
+    box-shadow:var(--shadow);
+    z-index:20;
+    flex-shrink:0;
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:.5px;}
+  .brand .logo{
+    width:34px;height:34px;border-radius:10px;background:var(--sun-500);
+    display:flex;align-items:center;justify-content:center;font-size:18px;
+  }
+  .brand small{display:block;font-weight:400;font-size:11px;opacity:.8;letter-spacing:.3px;}
+  nav.tabs{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;}
+  nav.tabs button{
+    background:rgba(255,255,255,0.12);
+    border:1px solid rgba(255,255,255,0.25);
+    color:#fff;
+    padding:8px 14px;
+    border-radius:999px;
+    font-size:13.5px;
+    font-weight:600;
+    display:flex;align-items:center;gap:6px;
+    transition:.15s;
+  }
+  nav.tabs button:hover{background:rgba(255,255,255,0.22);}
+  nav.tabs button.active{background:var(--sun-500);border-color:var(--sun-500);color:#3a2500;}
+  .badge-count{
+    background:rgba(0,0,0,0.25);
+    border-radius:999px;
+    min-width:18px;height:18px;
+    font-size:11px;
+    display:inline-flex;align-items:center;justify-content:center;
+    padding:0 5px;
+  }
+  nav.tabs button.active .badge-count{background:rgba(0,0,0,0.3);}
+
+  /* ---------- Mobile bottom navigation (app-style tab bar) ---------- */
+  nav.bottom-nav{
+    display:none;
+    position:fixed;left:0;right:0;bottom:0;z-index:200;
+    background:#fff;
+    border-top:1px solid var(--line);
+    box-shadow:0 -2px 12px rgba(11,61,74,0.08);
+    padding:6px calc(4px + var(--safe-l)) calc(6px + var(--safe-b)) calc(4px + var(--safe-r));
+  }
+  nav.bottom-nav .bn-inner{display:flex;}
+  nav.bottom-nav button{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:none;border:none;color:var(--ink-400);padding:6px 2px;border-radius:12px;
+    font-size:10.5px;font-weight:600;position:relative;min-height:48px;
+  }
+  nav.bottom-nav button.active{color:var(--sea-700);}
+  nav.bottom-nav .bn-icon{font-size:21px;line-height:1;}
+  nav.bottom-nav .badge-count{
+    position:absolute;top:2px;right:calc(50% - 24px);
+    background:var(--sun-500);color:#3a2500;
+  }
+
+  /* ---------- Mobile filter drawer (探索/篩選) ---------- */
+  .sidebar-backdrop{
+    display:none;position:fixed;inset:0;background:rgba(11,25,30,0.5);z-index:150;
+  }
+  .sidebar-backdrop.open{display:block;}
+  .drawer-head{display:none;}
+
+  /* ---------- Mobile pane switch (列表/地圖 切換) ---------- */
+  .pane-switch{
+    display:none;gap:6px;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--line);
+  }
+  .pane-switch button{
+    flex:1;border:1px solid var(--line);background:#fff;color:var(--ink-600);
+    padding:9px 8px;border-radius:10px;font-size:13px;font-weight:700;
+  }
+  .pane-switch button.active{background:var(--sea-700);color:#fff;border-color:var(--sea-700);}
+
+  .disclaimer{
+    background:#fff6e6;
+    border-bottom:1px solid #f0dcb0;
+    color:#7a5410;
+    font-size:12.5px;
+    padding:6px 22px;
+    display:flex;gap:8px;align-items:center;
+  }
+
+  main.views{flex:1;min-height:0;position:relative;}
+  .view{display:none;height:100%;}
+  .view.active{display:flex;height:100%;}
+
+  /* ---------- Explore view ---------- */
+  #view-explore{}
+  .sidebar{
+    width:290px;
+    min-width:290px;
+    background:var(--card);
+    border-right:1px solid var(--line);
+    overflow-y:auto;
+    padding:16px;
+  }
+  .sidebar h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-600);margin:18px 0 8px;}
+  .sidebar h3:first-child{margin-top:0;}
+  .search-box{
+    display:flex;align-items:center;gap:6px;
+    border:1px solid var(--line);border-radius:10px;
+    padding:8px 10px;background:var(--sea-100);
+  }
+  .search-box input{border:none;background:transparent;outline:none;font-size:14px;width:100%;color:var(--ink-900);}
+  .chip-group{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{
+    border:1px solid var(--line);
+    background:#fff;
+    padding:6px 11px;
+    border-radius:999px;
+    font-size:12.5px;
+    color:var(--ink-600);
+    user-select:none;
+  }
+  .chip.on{background:var(--sea-500);border-color:var(--sea-500);color:#fff;font-weight:600;}
+  .chip.tag.on{background:var(--sun-500);border-color:var(--sun-500);color:#3a2500;}
+  .field-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+  .stepper{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:4px 6px;}
+  .stepper button{width:24px;height:24px;border:none;background:var(--sea-100);border-radius:7px;font-size:15px;color:var(--sea-700);font-weight:700;}
+  .stepper span{min-width:20px;text-align:center;font-weight:700;}
+  .reset-link{font-size:12px;color:var(--sea-700);text-decoration:underline;background:none;border:none;padding:0;}
+  .drawer-close{border:none;background:var(--sea-100);color:var(--sea-700);width:32px;height:32px;border-radius:9px;font-size:15px;}
+  .apply-filter-btn{display:none;}
+  .pane-switch button{min-height:40px;}
+  .pane-switch .pane-filter-btn{flex:0 0 auto;padding:9px 12px;background:var(--sea-100);color:var(--sea-700);border-color:var(--sea-100);}
+
+  .explore-main{flex:1;display:flex;min-width:0;}
+  .list-pane{width:360px;min-width:300px;border-right:1px solid var(--line);overflow-y:auto;background:var(--bg);}
+  .list-pane-head{padding:12px 14px 6px;font-size:12.5px;color:var(--ink-600);display:flex;justify-content:space-between;}
+  .card-list{padding:6px 12px 20px;display:flex;flex-direction:column;gap:10px;}
+  /* z-index:1 讓這個容器自成堆疊環境，避免 Leaflet 內部圖層（z-index 最高到 700）穿透蓋住上方的彈窗 */
+  .map-pane{flex:1;position:relative;z-index:1;}
+  #map{position:absolute;inset:0;}
+
+  .spot-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:12px;
+    box-shadow:var(--shadow);
+    cursor:pointer;
+    transition:.12s;
+  }
+  .spot-card:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(11,61,74,0.12);}
+  .spot-card .row1{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;}
+  .spot-card .name{font-weight:700;font-size:14.5px;}
+  .spot-card .type-icon{font-size:16px;}
+  .spot-card .meta{font-size:12px;color:var(--ink-400);margin-top:2px;}
+  .stars{color:var(--sun-600);font-size:12.5px;font-weight:700;}
+  .spot-card .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+  .mini-tag{font-size:11px;background:var(--sea-100);color:var(--sea-700);padding:2px 7px;border-radius:999px;}
+  .auth-badge{
+    display:inline-flex;align-items:center;gap:4px;
+    font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+  }
+  .auth-high{background:#e5f6ec;color:var(--good);}
+  .auth-mid{background:#fdf3dd;color:var(--warn);}
+  .auth-low{background:#fbe8ea;color:var(--bad);}
+  .card-actions{display:flex;gap:8px;margin-top:10px;}
+  .btn{
+    border:none;border-radius:9px;padding:7px 12px;font-size:12.5px;font-weight:700;
+  }
+  .btn-primary{background:var(--sea-700);color:#fff;}
+  .btn-primary.added{background:var(--good);}
+  .btn-ghost{background:var(--sea-100);color:var(--sea-700);}
+  .empty-hint{padding:30px 16px;text-align:center;color:var(--ink-400);font-size:13px;}
+
+  /* ---------- Modal ---------- */
+  .modal-backdrop{
+    position:fixed;inset:0;background:rgba(11,25,30,0.55);
+    display:none;align-items:center;justify-content:center;z-index:100;padding:20px;
+  }
+  .modal-backdrop.open{display:flex;}
+  .modal{
+    background:#fff;border-radius:16px;max-width:520px;width:100%;max-height:85vh;overflow-y:auto;
+    padding:22px;position:relative;
+  }
+  .modal-close{position:absolute;top:14px;right:14px;border:none;background:var(--sea-100);width:28px;height:28px;border-radius:8px;font-size:15px;color:var(--sea-700);}
+  .modal h2{margin:0 0 4px;font-size:19px;}
+  .modal .modal-meta{color:var(--ink-400);font-size:13px;margin-bottom:12px;}
+  .modal .desc{font-size:13.5px;line-height:1.7;color:var(--ink-600);margin-bottom:14px;}
+  .auth-box{background:var(--sea-100);border-radius:12px;padding:12px 14px;margin-bottom:14px;}
+  .auth-box .score-line{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .auth-score-num{font-size:22px;font-weight:800;}
+  .reason-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;font-size:12.5px;}
+  .reason-list li{display:flex;gap:6px;}
+  .review-explorer{border-top:1px dashed var(--line);margin-top:4px;padding-top:14px;}
+  .dist-chart{display:flex;flex-direction:column;gap:3px;margin-bottom:14px;}
+  .dist-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink-600);}
+  .dist-star{width:22px;flex-shrink:0;}
+  .dist-track{flex:1;height:7px;background:var(--sea-100);border-radius:5px;overflow:hidden;}
+  .dist-fill{height:100%;background:var(--sun-500);border-radius:5px;}
+  .dist-num{width:22px;text-align:right;flex-shrink:0;color:var(--ink-400);}
+  .review-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media (max-width:520px){ .review-cols{grid-template-columns:1fr;} }
+  .review-col-title{font-size:12.5px;font-weight:700;margin-bottom:8px;padding:5px 9px;border-radius:8px;}
+  .review-col-title.good{background:#e5f6ec;color:var(--good);}
+  .review-col-title.bad{background:#fbe8ea;color:var(--bad);}
+  .review-item{font-size:12px;color:var(--ink-600);background:#fafcfc;border:1px solid var(--line);border-radius:9px;padding:8px 9px;margin-bottom:7px;line-height:1.55;}
+  .review-item .review-item-head{display:flex;justify-content:space-between;margin-bottom:3px;color:var(--ink-900);}
+  .review-empty{font-size:11.5px;color:var(--ink-400);padding:6px 2px;}
+  .group-warn{background:#fdf3dd;color:#8a6710;border-radius:10px;padding:8px 10px;font-size:12.5px;margin-bottom:12px;}
+
+  /* ---------- Itinerary view ---------- */
+  #view-itinerary{padding:0;}
+  .itinerary-wrap{flex:1;display:flex;min-width:0;}
+  .itinerary-left{width:400px;min-width:340px;border-right:1px solid var(--line);background:var(--card);overflow-y:auto;padding:18px;}
+  .itinerary-right{flex:1;display:flex;flex-direction:column;min-width:0;}
+  .itinerary-right #map2{flex:1;position:relative;}
+  .itinerary-summary{background:var(--card);border-top:1px solid var(--line);padding:14px 18px;display:flex;gap:18px;flex-wrap:wrap;}
+  .sum-stat{}
+  .sum-stat .num{font-size:18px;font-weight:800;color:var(--sea-700);}
+  .sum-stat .lbl{font-size:11.5px;color:var(--ink-400);}
+  select.field{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;font-size:13.5px;background:#fff;}
+  .stop-item{
+    display:flex;gap:10px;align-items:center;
+    border:1px solid var(--line);border-radius:12px;padding:9px 10px;margin-bottom:8px;background:#fff;
+  }
+  .stop-num{width:24px;height:24px;border-radius:50%;background:var(--sea-700);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .stop-item .stop-name{font-weight:600;font-size:13.5px;}
+  .stop-item .stop-tags{font-size:11px;color:var(--ink-400);}
+  .stop-remove{margin-left:auto;border:none;background:none;color:var(--bad);font-size:16px;}
+  .segment-note{font-size:11.5px;color:var(--sea-700);margin:2px 0 10px 34px;display:flex;align-items:center;gap:5px;}
+  .segment-note.ferry{color:var(--sun-600);}
+  .empty-itin{color:var(--ink-400);font-size:13px;text-align:center;padding:26px 10px;border:1px dashed var(--line);border-radius:12px;}
+
+  .timetable{display:flex;flex-direction:column;}
+  .tt-row{display:flex;gap:10px;padding:5px 0;font-size:12.5px;align-items:flex-start;}
+  .tt-time{width:88px;flex-shrink:0;font-weight:700;color:var(--sea-700);font-variant-numeric:tabular-nums;}
+  .tt-body{flex:1;color:var(--ink-900);}
+  .tt-sub{color:var(--ink-400);font-weight:400;font-size:11.5px;}
+  .tt-row.tt-travel .tt-body, .tt-row.tt-idle .tt-body{color:var(--ink-400);font-size:11.5px;}
+  .tt-row.tt-meal{background:#fff8ec;border-radius:9px;margin:1px 0;padding:7px 8px;}
+  .tt-row.tt-visit{padding:5px 0;}
+  .tt-row.tt-warning .tt-body{color:var(--warn);}
+  .tt-row.tt-end .tt-body{color:var(--ink-400);}
+  .tt-row.tt-depart .tt-body{font-weight:700;}
+  .generate-btn{
+    width:100%;background:var(--sun-500);color:#3a2500;border:none;border-radius:11px;
+    padding:11px;font-weight:800;font-size:14px;margin-top:6px;
+  }
+  .generate-btn:disabled{opacity:.5;}
+
+  /* ---------- AI view ---------- */
+  #view-ai{display:flex;}
+  .ai-wrap{max-width:760px;margin:0 auto;width:100%;display:flex;flex-direction:column;height:100%;}
+  .ai-banner{
+    background:linear-gradient(120deg,var(--sea-100),#fff);
+    margin:16px 16px 0;border-radius:12px;padding:10px 14px;font-size:12.5px;color:var(--sea-700);
+    border:1px solid var(--sea-300);
+  }
+  .chat-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;}
+  .msg{max-width:78%;padding:11px 14px;border-radius:14px;font-size:13.5px;line-height:1.6;}
+  .msg.bot{background:#fff;border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px;}
+  .msg.user{background:var(--sea-700);color:#fff;align-self:flex-end;border-bottom-right-radius:4px;}
+  .msg .itin-mini{margin-top:8px;display:flex;flex-direction:column;gap:6px;}
+  .itin-mini .imini-card{background:var(--sea-100);border-radius:9px;padding:7px 9px;font-size:12.5px;display:flex;justify-content:space-between;gap:8px;}
+  .msg .add-all-btn{margin-top:8px;background:var(--sun-500);color:#3a2500;border:none;border-radius:9px;padding:7px 12px;font-size:12.5px;font-weight:700;}
+  .chips-row{display:flex;flex-wrap:wrap;gap:8px;padding:0 16px 10px;}
+  .quick-chip{background:#fff;border:1px solid var(--sea-300);color:var(--sea-700);border-radius:999px;padding:7px 12px;font-size:12.5px;}
+  .chat-input-row{display:flex;gap:8px;padding:14px 16px;border-top:1px solid var(--line);background:var(--card);}
+  .chat-input-row input{flex:1;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font-size:14px;outline:none;}
+  .chat-input-row button{background:var(--sea-700);color:#fff;border:none;border-radius:11px;padding:0 18px;font-weight:700;}
+
+  ::-webkit-scrollbar{width:9px;height:9px;}
+  ::-webkit-scrollbar-thumb{background:#c7dade;border-radius:6px;}
+
+  /* =========================================================================
+     手機版樣式（App 模式）：底部分頁列、篩選抽屜、列表/地圖切換、底部彈出詳情卡
+     ========================================================================= */
+  @media (max-width:880px){
+    header.topbar nav.tabs{display:none;}
+    header.topbar{padding-right:14px;}
+    .disclaimer{font-size:11px;padding:6px 14px;line-height:1.5;}
+
+    nav.bottom-nav{display:block;}
+    main.views{padding-bottom:calc(var(--bottom-nav-h) + var(--safe-b));}
+
+    /* ---- 篩選抽屜（原本桌面版側邊欄，手機版變成可滑出的抽屜） ---- */
+    .sidebar{
+      display:block;
+      position:fixed;top:0;left:0;bottom:0;
+      width:86%;max-width:340px;
+      padding:calc(16px + var(--safe-t)) 16px calc(16px + var(--safe-b));
+      background:var(--card);
+      transform:translateX(-105%);
+      transition:transform .25s ease;
+      z-index:180;
+      box-shadow:6px 0 24px rgba(0,0,0,0.28);
+      overflow-y:auto;
+    }
+    .sidebar.open{transform:translateX(0);}
+    .drawer-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line);font-size:15px;}
+    .apply-filter-btn{display:block;}
+    .chip{padding:8px 13px;font-size:13px;} /* 加大觸控面積 */
+    .stepper button{width:34px;height:34px;font-size:17px;}
+
+    /* ---- 列表／地圖 切換列 ---- */
+    .pane-switch{display:flex;order:-1;flex:0 0 auto;}
+
+    /* ---- 探索頁：列表／地圖 二選一顯示 ---- */
+    .explore-main{flex-direction:column;}
+    .list-pane,.map-pane{width:100%;flex:1 1 auto;min-height:0;}
+    .explore-main:not(.show-map) .map-pane{display:none;}
+    .explore-main.show-map .list-pane{display:none;}
+    .btn{padding:9px 14px;font-size:13px;}
+
+    /* ---- 行程頁：規劃／地圖 二選一顯示 ---- */
+    .itinerary-wrap{flex-direction:column;}
+    .itinerary-left,.itinerary-right{width:100%;flex:1 1 auto;min-height:0;}
+    .itinerary-right{display:flex;flex-direction:column;}
+    .itinerary-wrap:not(.show-map) .itinerary-right{display:none;}
+    .itinerary-wrap.show-map .itinerary-left{display:none;}
+    .itinerary-right #map2{flex:1;min-height:0;}
+
+    /* ---- 詳情卡改為手機常見的「底部彈出卡（bottom sheet）」 ---- */
+    .modal-backdrop{align-items:flex-end;padding:0;}
+    .modal{
+      border-radius:20px 20px 0 0;max-width:100%;width:100%;
+      max-height:88vh;padding:20px 18px calc(20px + var(--safe-b));
+    }
+    .modal-close{width:34px;height:34px;font-size:17px;top:12px;right:12px;}
+
+    .chat-input-row{padding-bottom:calc(14px + var(--safe-b));}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">🌊</div>
+      <div>
+        台灣趣旅行
+        <small>Taiwan Trip Planner · 互動原型</small>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button data-view="explore" class="active">🔍 探索地點</button>
+      <button data-view="ai">🤖 AI 規劃助手</button>
+      <button data-view="itinerary">🧭 我的行程 <span class="badge-count itin-count" id="itinCount">0</span></button>
+    </nav>
+  </header>
+
+  <div class="disclaimer">
+    ⚠️ 這是功能原型（Demo）：地點、評論、真偽分數與交通時間皆為<b>模擬展示資料</b>，非即時真實資訊。正式版將串接 Google Places／Directions API 與真實語言模型服務。
+  </div>
+
+  <main class="views">
+
+    <!-- ================= EXPLORE VIEW ================= -->
+    <section id="view-explore" class="view active">
+      <aside class="sidebar">
+        <div class="drawer-head">
+          <b>🔧 篩選條件</b>
+          <button id="closeFilterBtn" class="drawer-close" type="button">✕</button>
+        </div>
+        <h3>搜尋</h3>
+        <div class="search-box">
+          <span>🔎</span>
+          <input id="searchInput" type="text" placeholder="搜尋地點、關鍵字…">
+        </div>
+
+        <h3>地區</h3>
+        <div class="chip-group" id="regionChips"></div>
+
+        <h3>類型</h3>
+        <div class="chip-group" id="typeChips"></div>
+
+        <h3>風格標籤（可複選）</h3>
+        <div class="chip-group" id="tagChips"></div>
+
+        <h3>同行人數</h3>
+        <div class="stepper">
+          <button id="peopleMinus">−</button>
+          <span id="peopleVal">2</span>
+          <button id="peoplePlus">+</button>
+        </div>
+
+        <h3>評論可信度</h3>
+        <div class="chip-group" id="authChips"></div>
+
+        <div style="margin-top:18px;">
+          <button class="reset-link" id="resetFilters">清除所有篩選</button>
+        </div>
+        <button class="generate-btn apply-filter-btn" id="applyFilterBtn" type="button">查看結果</button>
+      </aside>
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <div class="explore-main" id="exploreMain">
+        <div class="pane-switch">
+          <button id="openFilterBtn" class="pane-filter-btn" type="button">🔧 篩選</button>
+          <button class="pane-opt active" data-pane="list" type="button">📋 列表</button>
+          <button class="pane-opt" data-pane="map" type="button">🗺️ 地圖</button>
+        </div>
+        <div class="list-pane">
+          <div class="list-pane-head">
+            <span id="resultCount">共 0 個地點</span>
+            <span>點卡片看評論真偽分析</span>
+          </div>
+          <div class="card-list" id="cardList"></div>
+        </div>
+        <div class="map-pane"><div id="map"></div></div>
+      </div>
+    </section>
+
+    <!-- ================= AI VIEW ================= -->
+    <section id="view-ai" class="view">
+      <div class="ai-wrap">
+        <div class="ai-banner">🤖 AI 對話式規劃助手（原型：規則式關鍵字解析模擬，正式版將串接大型語言模型 API）— 試著輸入「帶毛小孩去墾丁玩兩天一夜」或「台北出發，情侶約會半日遊」</div>
+        <div class="chips-row" id="personaChips" style="padding:10px 16px 0;"></div>
+        <div class="chat-log" id="chatLog"></div>
+        <div class="chips-row" id="quickChips"></div>
+        <div class="chat-input-row">
+          <input id="chatInput" type="text" placeholder="描述你的旅遊需求，例如：這週末想帶爸媽去宜蘭放鬆兩天一夜…">
+          <button id="chatSend">送出</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= ITINERARY VIEW ================= -->
+    <section id="view-itinerary" class="view">
+      <div class="itinerary-wrap" id="itinWrap">
+        <div class="pane-switch">
+          <button class="pane-opt active" data-pane="list" type="button">📋 規劃</button>
+          <button class="pane-opt" data-pane="map" type="button">🗺️ 地圖</button>
+        </div>
+        <div class="itinerary-left">
+          <h3 style="margin-top:0;">出發地</h3>
+          <select class="field" id="departureSelect"></select>
+
+          <h3>同行人數</h3>
+          <div class="stepper">
+            <button id="peopleMinus2">−</button>
+            <span id="peopleVal2">2</span>
+            <button id="peoplePlus2">+</button>
+          </div>
+
+          <h3>出發時間</h3>
+          <select class="field" id="startTimeSelect"></select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-600);margin-top:8px;">
+            <input type="checkbox" id="enableLateNight"> 也幫我排宵夜／居酒屋時段（21:00 後）
+          </label>
+
+          <h3>已加入的地點（<span id="stopCountLabel">0</span>）</h3>
+          <div id="stopList"></div>
+
+          <button class="generate-btn" id="generateRouteBtn">✨ 產生建議路線</button>
+          <button class="generate-btn" id="rainReplanBtn" style="background:var(--sea-100);color:var(--sea-700);margin-top:8px;">☔ 模擬下雨，動態重新規劃</button>
+          <div id="rainNote" style="font-size:12px;color:var(--sea-700);margin-top:6px;line-height:1.6;"></div>
+
+          <div id="routeResult" style="margin-top:16px;"></div>
+        </div>
+        <div class="itinerary-right">
+          <div id="map2"></div>
+          <div class="itinerary-summary" id="itinSummary" style="display:none;">
+            <div class="sum-stat"><div class="num" id="sumStops">0</div><div class="lbl">停靠點</div></div>
+            <div class="sum-stat"><div class="num" id="sumDist">0 km</div><div class="lbl">總距離</div></div>
+            <div class="sum-stat"><div class="num" id="sumTime">0 小時</div><div class="lbl">預估車程/船程</div></div>
+            <div class="sum-stat"><div class="num" id="sumDays">1 天</div><div class="lbl">建議天數</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 手機版底部導覽列（App 樣式分頁列，取代頂部 nav.tabs） -->
+  <nav class="bottom-nav" id="bottomNav">
+    <div class="bn-inner">
+      <button data-view="explore" class="active" type="button">
+        <span class="bn-icon">🔍</span><span class="bn-label">探索</span>
+      </button>
+      <button data-view="ai" type="button">
+        <span class="bn-icon">🤖</span><span class="bn-label">AI 規劃</span>
+      </button>
+      <button data-view="itinerary" type="button">
+        <span class="bn-icon">🧭</span><span class="bn-label">我的行程</span>
+        <span class="badge-count itin-count">0</span>
+      </button>
+    </div>
+  </nav>
+</div>
+
+<!-- Detail modal -->
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal" id="modalBody"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* =========================================================================
+   1. DATA MODEL — 假資料，涵蓋本島北中南東 + 澎湖／金門／小琉球／綠島蘭嶼
+   ========================================================================= */
+const TAG_META = {
+  pet:      {label:'寵物友善', icon:'🐾'},
+  kid:      {label:'親子友善', icon:'👶'},
+  couple:   {label:'情侶約會', icon:'💑'},
+  friends:  {label:'三五好友', icon:'🎉'},
+  elder:    {label:'長輩友善', icon:'🧓'},
+  adventure:{label:'戶外探險', icon:'⛰️'},
+  igphoto:  {label:'文青打卡', icon:'📸'},
+  foodie:   {label:'美食推薦', icon:'🍜'},
+  free:     {label:'免門票',   icon:'🎟️'},
+  rainy:    {label:'雨天備案', icon:'☔'},
+};
+// 旅遊人格：影響 AI 推薦時的地點篩選權重與建議站數
+const PERSONAS = {
+  zen:    {label:'佛系旅人',   icon:'🧘', maxStops:3},
+  photo:  {label:'攝影旅人',   icon:'📸', maxStops:4},
+  foodie: {label:'美食獵人',   icon:'🍜', maxStops:6},
+  kid:    {label:'親子玩家',   icon:'👨‍👩‍👧', maxStops:4, forceTag:'kid'},
+  pet:    {label:'毛孩旅人',   icon:'🐕', maxStops:4, forceTag:'pet'},
+  packed: {label:'行程狂人',   icon:'🏃', maxStops:8},
+};
+
+const REGIONS = ['北部','中部','南部','東部','離島-澎湖','離島-金門','離島-小琉球','離島-其他'];
+const TYPE_META = {attraction:{label:'景點',icon:'🏞️'}, restaurant:{label:'餐廳/小吃',icon:'🍽️'}};
+
+// 評論真偽原因庫（依等級抽樣使用）
+const REASONS = {
+  high:[
+    {ok:true,text:'評論發文時間分布自然，無短期爆量集中'},
+    {ok:true,text:'評論文字用詞多樣，非制式化模板句'},
+    {ok:true,text:'評論帳號多具備長期、跨店評論紀錄'},
+    {ok:true,text:'評分與文字情緒一致，好評壞評皆有具體描述'},
+  ],
+  mid:[
+    {ok:true,text:'多數評論時間分布尚屬正常'},
+    {ok:false,text:'部分五星評論集中在特定活動檔期，建議留意'},
+    {ok:true,text:'負評與好評並存，非單一極端評分'},
+    {ok:false,text:'少部分帳號評論紀錄較新、僅評論此店家'},
+  ],
+  low:[
+    {ok:false,text:'短期內出現大量五星評論，時間高度集中'},
+    {ok:false,text:'多則評論用詞高度相似，疑似模板貼文'},
+    {ok:false,text:'多數留言帳號僅有 1 則評論紀錄（新帳號）'},
+    {ok:false,text:'幾乎無中低分評論，評分分布不自然'},
+  ]
+};
+function authLevel(score){ return score>=80?'high':score>=55?'mid':'low'; }
+
+function mkAuth(score){
+  const lvl = authLevel(score);
+  return {score, level:lvl, reasons:REASONS[lvl]};
+}
+
+// dur = 建議停留分鐘數（示範估算）；meal = 餐廳適合的用餐時段（breakfast 早午餐／lunch 午餐／teatime 下午茶／dinner 晚餐／latenight 宵夜）
+const SPOTS = [
+  // ---------- 北部 ----------
+  {id:'tp01',name:'台北 101 觀景台',type:'attraction',region:'北部',lat:25.0330,lng:121.5654,tags:['couple','friends','igphoto'],rating:4.6,reviews:41230,price:'$$$',groupMax:20,desc:'指標地標，可登高俯瞰整個台北盆地夜景，適合初訪旅客與情侶約會。',auth:mkAuth(88),dur:90},
+  {id:'tp02',name:'象山親山步道',type:'attraction',region:'北部',lat:25.0273,lng:121.5760,tags:['pet','friends','adventure','free','igphoto'],rating:4.5,reviews:8920,price:'免費',groupMax:15,desc:'輕鬆親民的登山步道，可拍攝 101 經典景框，寵物可牽繩同行。',auth:mkAuth(91),dur:75},
+  {id:'tp03',name:'貓空纜車茶園',type:'attraction',region:'北部',lat:24.9977,lng:121.5866,tags:['couple','elder','friends'],rating:4.3,reviews:6210,price:'$$',groupMax:10,desc:'搭乘纜車上山喝茶賞景，步調悠閒，適合帶長輩同遊。',auth:mkAuth(76),dur:120},
+  {id:'tp04',name:'淡水老街河岸小吃',type:'restaurant',region:'北部',lat:25.1700,lng:121.4400,tags:['kid','friends','foodie'],rating:4.2,reviews:15400,price:'$',groupMax:30,desc:'河岸夕陽搭配道地小吃，鐵蛋、阿給、魚酥是招牌，親子出遊熱門選擇。',auth:mkAuth(69),dur:60,meal:['lunch','dinner']},
+  {id:'tp05',name:'九份山城老街',type:'attraction',region:'北部',lat:25.1097,lng:121.8442,tags:['couple','igphoto','friends'],rating:4.4,reviews:23870,price:'免費',groupMax:20,desc:'紅燈籠山城，坡道階梯眾多，適合拍照但娃娃車與行動不便者需留意地形。',auth:mkAuth(82),dur:100},
+  {id:'tp06',name:'陽明山國家公園步道',type:'attraction',region:'北部',lat:25.1638,lng:121.5606,tags:['pet','adventure','free','elder'],rating:4.5,reviews:9100,price:'免費',groupMax:15,desc:'花季賞花、四季皆宜健行，部分平緩步道適合長輩與寵物。',auth:mkAuth(87),dur:120},
+  {id:'tp07',name:'巷弄柴燒麻油雞小館',type:'restaurant',region:'北部',lat:25.0475,lng:121.5170,tags:['elder','foodie','rainy'],rating:4.7,reviews:512,price:'$$',groupMax:8,desc:'在地人推薦的傳統暖胃料理，冬季排隊名店，適合長輩聚餐。',auth:mkAuth(58),dur:60,meal:['lunch','dinner']},
+  {id:'tp08',name:'礁溪溫泉旅館街',type:'attraction',region:'北部',lat:24.8280,lng:121.7710,tags:['couple','elder','rainy'],rating:4.3,reviews:7300,price:'$$',groupMax:10,desc:'平價溫泉泡湯選擇多，雨天備案首選，適合小型家庭旅遊。',auth:mkAuth(74),dur:100},
+  {id:'tp09',name:'宜蘭傳統藝術中心',type:'attraction',region:'北部',lat:24.6830,lng:121.8140,tags:['kid','friends','free'],rating:4.2,reviews:5600,price:'部分免費',groupMax:25,desc:'園區內有街頭表演與手作 DIY，適合親子與團體出遊。',auth:mkAuth(71),dur:110},
+  {id:'tp10',name:'網美系海景玻璃咖啡',type:'restaurant',region:'北部',lat:25.1785,lng:121.4020,tags:['couple','igphoto'],rating:4.1,reviews:980,price:'$$',groupMax:6,desc:'落地窗海景咖啡廳，甜點精緻，是熱門的打卡約會地點。',auth:mkAuth(46),dur:75,meal:['teatime']},
+  {id:'tp11',name:'巷口傳統豆漿早餐店',type:'restaurant',region:'北部',lat:25.0350,lng:121.5200,tags:['elder','kid','free'],rating:4.3,reviews:1200,price:'$',groupMax:15,desc:'在地排隊早餐店，燒餅油條、蛋餅與豆漿是招牌，適合出發前先填飽肚子。',auth:mkAuth(72),dur:35,meal:['breakfast']},
+  {id:'tp12',name:'深夜串燒小酒館',type:'restaurant',region:'北部',lat:25.0420,lng:121.5330,tags:['couple','friends'],rating:4.3,reviews:1560,price:'$$',groupMax:15,desc:'營業到深夜的串燒居酒屋，適合行程結束後小酌宵夜。',auth:mkAuth(65),dur:75,meal:['dinner','latenight']},
+
+  // ---------- 中部 ----------
+  {id:'tc01',name:'高美濕地夕陽步道',type:'attraction',region:'中部',lat:24.3106,lng:120.5540,tags:['couple','friends','free','igphoto'],rating:4.5,reviews:14200,price:'免費',groupMax:20,desc:'夕陽時分風車與濕地相映，退潮時可下水區走木棧道。',auth:mkAuth(85),dur:90},
+  {id:'tc02',name:'彩虹眷村',type:'attraction',region:'中部',lat:24.1444,lng:120.6469,tags:['kid','igphoto','free'],rating:4.1,reviews:9800,price:'免費',groupMax:15,desc:'色彩繽紛的塗鴉眷村，適合親子拍照，園區不大約1小時可逛完。',auth:mkAuth(63),dur:45},
+  {id:'tc03',name:'逢甲夜市小吃巡禮',type:'restaurant',region:'中部',lat:24.1786,lng:120.6469,tags:['friends','foodie','rainy'],rating:4.3,reviews:26700,price:'$',groupMax:30,desc:'全台知名夜市之一，小吃選擇多元，適合朋友聚會覓食。',auth:mkAuth(66),dur:90,meal:['dinner','latenight']},
+  {id:'tc04',name:'日月潭環湖步道',type:'attraction',region:'中部',lat:23.8600,lng:120.9150,tags:['couple','elder','pet','adventure'],rating:4.6,reviews:18300,price:'免費',groupMax:15,desc:'湖光山色，可騎單車或步行環湖，纜車與遊船皆可安排半日遊。',auth:mkAuth(90),dur:150},
+  {id:'tc05',name:'清境農場青青草原',type:'attraction',region:'中部',lat:24.0500,lng:121.1600,tags:['kid','friends','pet'],rating:4.4,reviews:12100,price:'$$',groupMax:20,desc:'綿羊秀與高山草原景觀，親子與寵物皆宜，建議安排半天以上。',auth:mkAuth(80),dur:150},
+  {id:'tc06',name:'埔里在地米食小舖',type:'restaurant',region:'中部',lat:23.9640,lng:120.9660,tags:['elder','foodie'],rating:4.6,reviews:430,price:'$',groupMax:10,desc:'古早味米苔目與割包，價格親民，適合長輩用餐。',auth:mkAuth(55),dur:50,meal:['lunch']},
+  {id:'tc07',name:'阿里山日出森林步道',type:'attraction',region:'中部',lat:23.5100,lng:120.8020,tags:['adventure','couple','friends'],rating:4.7,reviews:16800,price:'$$',groupMax:15,desc:'搭小火車賞日出雲海，森林芬多精步道適合半日或一日遊。',auth:mkAuth(89),dur:180},
+  {id:'tc08',name:'老街古早味豆花店',type:'restaurant',region:'中部',lat:24.1520,lng:120.6840,tags:['kid','foodie','free'],rating:4.0,reviews:2100,price:'$',groupMax:10,desc:'手工豆花配料豐富，是在地小吃口袋名單。',auth:mkAuth(50),dur:40,meal:['teatime']},
+  {id:'tc09',name:'在地傳統早餐店',type:'restaurant',region:'中部',lat:24.1500,lng:120.6800,tags:['elder','kid','free'],rating:4.2,reviews:860,price:'$',groupMax:15,desc:'台式傳統早餐，蛋餅、飯糰與紅茶，適合準備出發前先吃飽。',auth:mkAuth(70),dur:35,meal:['breakfast']},
+
+  // ---------- 南部 ----------
+  {id:'ks01',name:'安平古堡歷史園區',type:'attraction',region:'南部',lat:22.9958,lng:120.1610,tags:['kid','elder','friends'],rating:4.3,reviews:15700,price:'$',groupMax:25,desc:'台灣最早的城堡遺跡，歷史導覽豐富，適合親子與長輩共遊。',auth:mkAuth(83),dur:80},
+  {id:'ks02',name:'花園夜市在地美食',type:'restaurant',region:'南部',lat:22.9998,lng:120.2130,tags:['friends','foodie','rainy'],rating:4.5,reviews:19800,price:'$',groupMax:30,desc:'台南最大觀光夜市，美食密度高，週四六日限定營業。',auth:mkAuth(78),dur:90,meal:['dinner','latenight']},
+  {id:'ks03',name:'駁二藝術特區',type:'attraction',region:'南部',lat:22.6193,lng:120.2820,tags:['couple','igphoto','friends'],rating:4.4,reviews:11200,price:'免費',groupMax:20,desc:'倉庫改建的文創園區，展覽與裝置藝術豐富，適合拍照約會。',auth:mkAuth(84),dur:90},
+  {id:'ks04',name:'旗津海岸公園',type:'attraction',region:'南部',lat:22.5710,lng:120.2660,tags:['pet','kid','friends','free'],rating:4.2,reviews:9600,price:'免費',groupMax:20,desc:'搭渡輪登島，沙灘、風車公園與海鮮街，寵物與親子皆宜。',auth:mkAuth(75),dur:90},
+  {id:'kt01',name:'墾丁國家公園海岸線',type:'attraction',region:'南部',lat:21.9460,lng:120.7970,tags:['couple','friends','adventure'],rating:4.5,reviews:20300,price:'部分免費',groupMax:25,desc:'珊瑚礁海岸與國境之南夕陽，適合安排一日或兩日遊。',auth:mkAuth(81),dur:120},
+  {id:'kt02',name:'墾丁大街海鮮熱炒',type:'restaurant',region:'南部',lat:21.9440,lng:120.7980,tags:['friends','foodie','rainy'],rating:4.0,reviews:3400,price:'$$',groupMax:20,desc:'夜市與熱炒店聚集，適合團體聚餐配啤酒。',auth:mkAuth(52),dur:100,meal:['dinner','latenight']},
+  {id:'ks05',name:'秘境海景無邊際咖啡',type:'restaurant',region:'南部',lat:22.4700,lng:120.4300,tags:['couple','igphoto'],rating:4.2,reviews:210,price:'$$$',groupMax:6,desc:'近期爆紅的網美咖啡廳，海景視野極佳，假日建議先訂位。',auth:mkAuth(41),dur:75,meal:['teatime']},
+  {id:'ks07',name:'台南度小月擔仔麵',type:'restaurant',region:'南部',lat:22.9930,lng:120.2010,tags:['elder','foodie'],rating:4.4,reviews:4200,price:'$',groupMax:15,desc:'台南經典小吃代表，擔仔麵配蝦捲，市區內用餐方便快速。',auth:mkAuth(76),dur:50,meal:['lunch','dinner']},
+  {id:'ks06',name:'台南在地早餐店',type:'restaurant',region:'南部',lat:22.9900,lng:120.2000,tags:['elder','foodie','free'],rating:4.4,reviews:1340,price:'$',groupMax:15,desc:'台南人熟悉的鹹粥與虱目魚湯早餐，在地人排隊的清晨首選。',auth:mkAuth(74),dur:40,meal:['breakfast']},
+
+  // ---------- 東部 ----------
+  {id:'hl01',name:'太魯閣峽谷步道',type:'attraction',region:'東部',lat:24.1588,lng:121.6221,tags:['adventure','couple','friends'],rating:4.8,reviews:24600,price:'免費',groupMax:20,desc:'壯闊峽谷地形，砂卡礑與燕子口步道是熱門健行路線。',auth:mkAuth(93),dur:150},
+  {id:'hl02',name:'七星潭海灣',type:'attraction',region:'東部',lat:23.9997,lng:121.6270,tags:['pet','couple','friends','free'],rating:4.5,reviews:13500,price:'免費',groupMax:20,desc:'新月形礫石海灣，適合散步賞海、騎單車，寵物可同行。',auth:mkAuth(86),dur:75},
+  {id:'hl03',name:'花蓮市區炸彈蔥油餅',type:'restaurant',region:'東部',lat:23.9770,lng:121.6040,tags:['friends','foodie'],rating:4.6,reviews:2870,price:'$',groupMax:15,desc:'在地排隊名店，酥脆多層次口感，適合排隊嚐鮮。',auth:mkAuth(72),dur:30,meal:['breakfast','lunch']},
+  {id:'ty01',name:'池上金城武樹稻田',type:'attraction',region:'東部',lat:23.1120,lng:121.2160,tags:['couple','igphoto','elder'],rating:4.4,reviews:8700,price:'免費',groupMax:15,desc:'一望無際稻浪風光，可租單車環繞田間，適合悠閒半日遊。',auth:mkAuth(79),dur:60},
+  {id:'hl04',name:'花蓮海岸線景觀咖啡',type:'restaurant',region:'東部',lat:24.0050,lng:121.6150,tags:['couple','igphoto'],rating:4.3,reviews:640,price:'$$',groupMax:8,desc:'太平洋海景第一排咖啡廳，適合下午茶配夕陽。',auth:mkAuth(60),dur:70,meal:['teatime']},
+  {id:'hl05',name:'花蓮觀光夜市熱炒',type:'restaurant',region:'東部',lat:23.9800,lng:121.6050,tags:['friends','foodie'],rating:4.1,reviews:2100,price:'$$',groupMax:20,desc:'花蓮觀光夜市周邊熱炒與燒烤店家聚集，適合晚餐延伸到宵夜。',auth:mkAuth(63),dur:90,meal:['dinner','latenight']},
+
+  // ---------- 離島-澎湖 ----------
+  {id:'ph01',name:'澎湖天后宮',type:'attraction',region:'離島-澎湖',lat:23.5650,lng:119.5800,tags:['elder','free'],rating:4.3,reviews:2300,price:'免費',groupMax:20,desc:'台灣歷史最悠久的媽祖廟之一，適合文化歷史巡禮。',auth:mkAuth(77),dur:40},
+  {id:'ph02',name:'澎湖跨海大橋夕陽',type:'attraction',region:'離島-澎湖',lat:23.6100,lng:119.5100,tags:['couple','igphoto','friends'],rating:4.5,reviews:4200,price:'免費',groupMax:15,desc:'橫跨海峽的大橋景觀，夕陽時分是熱門攝影點。',auth:mkAuth(80),dur:45},
+  {id:'ph03',name:'吉貝嶼沙尾海灘',type:'attraction',region:'離島-澎湖',lat:23.7200,lng:119.6200,tags:['friends','adventure','couple'],rating:4.6,reviews:5100,price:'船票另計',groupMax:20,desc:'搭船前往離島秘境沙灘，水上活動選擇多，適合三五好友同遊。',auth:mkAuth(84),dur:180},
+  {id:'ph04',name:'馬公中央老街海鮮',type:'restaurant',region:'離島-澎湖',lat:23.5670,lng:119.5620,tags:['friends','foodie','elder'],rating:4.2,reviews:1650,price:'$$',groupMax:20,desc:'新鮮海產與在地小吃並存的老街商圈。',auth:mkAuth(68),dur:70,meal:['lunch','dinner']},
+
+  // ---------- 離島-金門 ----------
+  {id:'km01',name:'莒光樓歷史地標',type:'attraction',region:'離島-金門',lat:24.4300,lng:118.3170,tags:['elder','free'],rating:4.2,reviews:1980,price:'免費',groupMax:15,desc:'金門地標建築，可眺望金城市區與海景。',auth:mkAuth(75),dur:40},
+  {id:'km02',name:'翟山坑道',type:'attraction',region:'離島-金門',lat:24.4200,lng:118.3050,tags:['adventure','friends'],rating:4.4,reviews:2600,price:'免費',groupMax:15,desc:'戰地坑道地景，水道與洞穴回音是特殊體驗，需注意步道濕滑。',auth:mkAuth(82),dur:60},
+  {id:'km03',name:'陽翟老街牛肉料理',type:'restaurant',region:'離島-金門',lat:24.4600,lng:118.4000,tags:['foodie','friends'],rating:4.5,reviews:890,price:'$$',groupMax:12,desc:'金門在地牛肉料理與高粱調味，是特色美食代表。',auth:mkAuth(70),dur:70,meal:['lunch','dinner']},
+  {id:'km04',name:'古寧頭戰史館',type:'attraction',region:'離島-金門',lat:24.4700,lng:118.2900,tags:['elder','free','kid'],rating:4.1,reviews:1400,price:'免費',groupMax:20,desc:'戰役歷史展館，適合結合歷史教育的親子行程。',auth:mkAuth(73),dur:60},
+
+  // ---------- 離島-小琉球 ----------
+  {id:'lq01',name:'小琉球花瓶岩',type:'attraction',region:'離島-小琉球',lat:22.3450,lng:120.3700,tags:['couple','igphoto','friends'],rating:4.4,reviews:6700,price:'免費',groupMax:15,desc:'獨特珊瑚礁地質景觀，日出時分光線極美。',auth:mkAuth(83),dur:40},
+  {id:'lq02',name:'小琉球浮潛看海龜',type:'attraction',region:'離島-小琉球',lat:22.3510,lng:120.3730,tags:['adventure','friends','couple'],rating:4.7,reviews:9200,price:'$$',groupMax:10,desc:'高機率近距離觀察海龜生態，需注意退潮時段與救生衣規定。',auth:mkAuth(88),dur:150},
+  {id:'lq03',name:'白沙尾老街小吃',type:'restaurant',region:'離島-小琉球',lat:22.3480,lng:120.3690,tags:['friends','foodie','kid'],rating:4.1,reviews:1580,price:'$',groupMax:20,desc:'港口附近聚集在地小吃與海鮮餐廳，租借機車的補給站。',auth:mkAuth(64),dur:60,meal:['lunch','dinner']},
+
+  // ---------- 離島-其他（綠島／蘭嶼） ----------
+  {id:'gd01',name:'綠島朝日溫泉',type:'attraction',region:'離島-其他',lat:22.6580,lng:121.4900,tags:['couple','elder','friends'],rating:4.5,reviews:3300,price:'$$',groupMax:15,desc:'全球罕見海底溫泉之一，可邊泡湯邊賞日出海景。',auth:mkAuth(85),dur:90},
+  {id:'gd02',name:'蘭嶼環島公路秘境',type:'attraction',region:'離島-其他',lat:22.0450,lng:121.5500,tags:['adventure','friends'],rating:4.6,reviews:2100,price:'免費',groupMax:12,desc:'達悟族文化與火山地質海岸線，適合機車環島探險。',auth:mkAuth(87),dur:180},
+];
+
+// 出發地清單（可作為路線規劃起點）
+const DEPARTURES = [
+  {name:'台北車站', lat:25.0478, lng:121.5170},
+  {name:'桃園國際機場', lat:25.0777, lng:121.2328},
+  {name:'台中車站', lat:24.1367, lng:120.6855},
+  {name:'台南車站', lat:22.9973, lng:120.2130},
+  {name:'高雄車站', lat:22.6395, lng:120.3020},
+  {name:'花蓮車站', lat:23.9930, lng:121.6010},
+  {name:'台東車站', lat:22.7553, lng:121.1450},
+  {name:'澎湖馬公機場', lat:23.5686, lng:119.6285},
+  {name:'金門尚義機場', lat:24.4280, lng:118.3590},
+  {name:'東港（小琉球渡輪口）', lat:22.4630, lng:120.4480},
+];
+
+/* =========================================================================
+   2. STATE
+   ========================================================================= */
+const state = {
+  search:'',
+  regions:new Set(),
+  types:new Set(),
+  tags:new Set(),
+  minAuth:0,
+  people:2,
+  itinerary:[],      // array of spot ids
+  activeView:'explore',
+  persona:null,      // 旅遊人格 key，見 PERSONAS
+  pendingAIRequest:null, // AI 助手問完「幾點出發」前，暫存已解析出的地區/標籤/人數等，等使用者回覆時間後才繼續
+};
+
+/* =========================================================================
+   3. UTILS
+   ========================================================================= */
+function haversine(a,b){
+  const R=6371;
+  const dLat=(b.lat-a.lat)*Math.PI/180;
+  const dLng=(b.lng-a.lng)*Math.PI/180;
+  const la1=a.lat*Math.PI/180, la2=b.lat*Math.PI/180;
+  const h=Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function isIslandRegion(region){ return !!region && region.startsWith('離島'); }
+function spotById(id){ return SPOTS.find(s=>s.id===id); }
+function starStr(r){ return '★'.repeat(Math.round(r)) + ' ' + r.toFixed(1); }
+function authBadgeClass(level){ return level==='high'?'auth-high':level==='mid'?'auth-mid':'auth-low'; }
+function authBadgeLabel(level){ return level==='high'?'🟢 可信':level==='mid'?'🟡 需留意':'🔴 疑似灌水'; }
+
+// 「今天適合去嗎」模擬判斷（示範用途：以日期+地點做偽隨機種子，非真實氣象/海況資料）
+// 正式版應改接中央氣象署開放資料 API、海象資料與船班公告
+function todaySuitability(s){
+  if(!(isIslandRegion(s.region) || s.tags.includes('adventure'))) return null;
+  let seed=0; for(const c of s.id) seed += c.charCodeAt(0);
+  seed += new Date().getDate();
+  const good = (seed % 5) !== 0; // 示範：約 80% 機率顯示「適合」
+  const reasons = isIslandRegion(s.region)
+    ? (good ? ['模擬海況平穩，船班預估準時','模擬降雨機率低'] : ['模擬風浪較大，水上活動不建議','船班可能異動，請留意官方公告'])
+    : (good ? ['模擬天氣穩定，適合戶外活動'] : ['模擬降雨機率偏高，建議攜帶雨具或改室內備案']);
+  return {good, reasons};
+}
+
+/* =========================================================================
+   4. FILTER SIDEBAR RENDER
+   ========================================================================= */
+function renderChipGroup(container, items, activeSet, getLabel, onToggle){
+  container.innerHTML = items.map(it=>{
+    const key = typeof it==='string' ? it : it.key;
+    const label = getLabel(it);
+    const on = activeSet.has(key);
+    return `<button class="chip ${activeSet===state.tags?'tag':''} ${on?'on':''}" data-key="${key}">${label}</button>`;
+  }).join('');
+  [...container.children].forEach(btn=>{
+    btn.onclick = ()=>{ onToggle(btn.dataset.key); };
+  });
+}
+
+function initSidebar(){
+  renderChipGroup(document.getElementById('regionChips'), REGIONS, state.regions, r=>r, key=>{
+    state.regions.has(key)?state.regions.delete(key):state.regions.add(key);
+    refreshFilters();
+  });
+  renderChipGroup(document.getElementById('typeChips'), Object.keys(TYPE_META), state.types, k=>TYPE_META[k].icon+' '+TYPE_META[k].label, key=>{
+    state.types.has(key)?state.types.delete(key):state.types.add(key);
+    refreshFilters();
+  });
+  renderChipGroup(document.getElementById('tagChips'), Object.keys(TAG_META), state.tags, k=>TAG_META[k].icon+' '+TAG_META[k].label, key=>{
+    state.tags.has(key)?state.tags.delete(key):state.tags.add(key);
+    refreshFilters();
+  });
+  const authOptions=[{key:0,label:'全部'},{key:80,label:'🟢 高可信度(80+)'},{key:55,label:'🟡 中等以上(55+)'}];
+  const authContainer=document.getElementById('authChips');
+  authContainer.innerHTML = authOptions.map(o=>`<button class="chip ${state.minAuth===o.key?'on':''}" data-key="${o.key}">${o.label}</button>`).join('');
+  [...authContainer.children].forEach(btn=>{
+    btn.onclick=()=>{ state.minAuth = Number(btn.dataset.key); refreshFilters(); };
+  });
+
+  document.getElementById('searchInput').addEventListener('input', e=>{
+    state.search = e.target.value.trim().toLowerCase();
+    refreshFilters();
+  });
+  document.getElementById('resetFilters').onclick = ()=>{
+    state.search=''; state.regions.clear(); state.types.clear(); state.tags.clear(); state.minAuth=0;
+    document.getElementById('searchInput').value='';
+    refreshFilters();
+  };
+  document.getElementById('peopleMinus').onclick=()=>{ setPeople(state.people-1); };
+  document.getElementById('peoplePlus').onclick=()=>{ setPeople(state.people+1); };
+  document.getElementById('peopleMinus2').onclick=()=>{ setPeople(state.people-1); };
+  document.getElementById('peoplePlus2').onclick=()=>{ setPeople(state.people+1); };
+}
+function setPeople(v){
+  state.people = Math.max(1, Math.min(30, v));
+  document.getElementById('peopleVal').textContent = state.people;
+  document.getElementById('peopleVal2').textContent = state.people;
+  renderStopList();
+}
+
+function refreshFilters(){
+  initSidebar(); // re-render chip states
+  renderCardList();
+  renderMapMarkers();
+}
+
+function filteredSpots(){
+  return SPOTS.filter(s=>{
+    if(state.search && !(s.name.toLowerCase().includes(state.search) || s.desc.toLowerCase().includes(state.search))) return false;
+    if(state.regions.size && !state.regions.has(s.region)) return false;
+    if(state.types.size && !state.types.has(s.type)) return false;
+    if(state.tags.size && ![...state.tags].every(t=>s.tags.includes(t))) return false;
+    if(s.auth.score < state.minAuth) return false;
+    return true;
+  });
+}
+
+/* =========================================================================
+   5. CARD LIST RENDER
+   ========================================================================= */
+function spotCardHTML(s){
+  const inItin = state.itinerary.includes(s.id);
+  return `
+  <div class="spot-card" data-id="${s.id}">
+    <div class="row1">
+      <div>
+        <span class="type-icon">${TYPE_META[s.type].icon}</span>
+        <span class="name">${s.name}</span>
+      </div>
+      <span class="auth-badge ${authBadgeClass(s.auth.level)}">${authBadgeLabel(s.auth.level)}</span>
+    </div>
+    <div class="meta"><span class="stars">${starStr(s.rating)}</span> · ${s.reviews.toLocaleString()} 則評論 · ${s.region} · ${s.price}</div>
+    <div class="tags">
+      ${s.tags.map(t=>`<span class="mini-tag">${TAG_META[t].icon} ${TAG_META[t].label}</span>`).join('')}
+    </div>
+    <div class="card-actions">
+      <button class="btn btn-primary itin-toggle ${inItin?'added':''}" data-id="${s.id}">${inItin?'✓ 已加入行程':'+ 加入行程'}</button>
+      <button class="btn btn-ghost detail-btn" data-id="${s.id}">查看評論真偽分析</button>
+    </div>
+  </div>`;
+}
+
+function renderCardList(){
+  const spots = filteredSpots();
+  document.getElementById('resultCount').textContent = `共 ${spots.length} 個地點`;
+  const listEl = document.getElementById('cardList');
+  listEl.innerHTML = spots.length ? spots.map(spotCardHTML).join('') : `<div class="empty-hint">找不到符合條件的地點，試試調整篩選條件 🙂</div>`;
+  listEl.querySelectorAll('.itin-toggle').forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation(); toggleItinerary(btn.dataset.id); };
+  });
+  listEl.querySelectorAll('.detail-btn').forEach(btn=>{
+    btn.onclick=(e)=>{ e.stopPropagation(); openDetail(btn.dataset.id); };
+  });
+  listEl.querySelectorAll('.spot-card').forEach(card=>{
+    card.onclick=()=>openDetail(card.dataset.id);
+  });
+}
+
+function toggleItinerary(id){
+  const idx = state.itinerary.indexOf(id);
+  if(idx>=0) state.itinerary.splice(idx,1); else state.itinerary.push(id);
+  updateItinCount();
+  renderCardList();
+  renderStopList();
+}
+
+/* =========================================================================
+   6. DETAIL MODAL (含評論真偽分析)
+   ========================================================================= */
+/* ---- 評論生成器（示範用途）----
+   依景點類型（景點／餐廳）與評論可信度等級，模擬產生一批含星等分布的評論，
+   並標記出「疑似樣板／灌水」的評論，讓使用者可以篩選只看「可信評論」，
+   同時把 5 星（優點）與 1 星（缺點）內容並排呈現，方便快速抓重點。
+   正式版應改為對真實 Google 評論資料做語意分析與摘要，而非模板生成。 */
+const REVIEW_TEMPLATES = {
+  attraction: {
+    5:['景色真的很美，很值得專程來一趟，拍照效果超好。','完全值回票價，動線規劃順暢，也適合帶家人一起來。','是這趟旅程中最喜歡的一站，天氣好時風景更加分。','空間寬敞舒服，整體體驗超出預期，會推薦給朋友。','很適合帶小孩跟長輩，走起來不會太累，風景也美。'],
+    4:['整體不錯，只是假日人潮較多，建議避開尖峰時段。','風景漂亮，但周邊設施可以再完善一點，停車稍微不便。','值得一遊，逛完大概需要 1-2 小時，安排半天剛好。'],
+    3:['普通，跟網路上的照片有點落差，實際體驗中規中矩。','還可以，但沒有特別驚豔，路過順遊還算OK。','設施有點老舊，維護狀況普通，可以列為順路景點。'],
+    2:['指標不太清楚，繞了不少路才找到入口，體驗打折。','人潮太多動線混亂，加上天氣不佳，整體體驗不理想。','周邊停車不好找，走了一段路才到，稍嫌麻煩。'],
+    1:['跟預期落差很大，不建議特地跑一趟。','設施維護不佳，現場髒亂，體驗很差。','花了不少交通時間，結果沒什麼特別的，有點失望。','人潮爆多又缺乏管理，體驗很差，不會再來。'],
+  },
+  restaurant: {
+    5:['餐點真的好吃，食材新鮮，服務也很親切，會再訪。','份量十足、價格合理，是這趟旅程中最驚艷的一餐。','老闆人很好，環境乾淨舒適，很適合帶長輩來用餐。','排隊值得，出餐速度快，整體CP值很高。','小孩也吃得很開心，店家對親子友善，會再回訪。'],
+    4:['味道不錯，只是假日人多要等一下，建議提早去。','餐點好吃，座位空間稍微擁擠，整體仍值得推薦。','份量剛好，價格中等，適合家庭聚餐。'],
+    3:['味道普通，跟評價有點落差，屬於中規中矩的選擇。','還可以接受，但沒有到非吃不可的程度。','服務態度普通，餐點口味中等。'],
+    2:['等待時間偏長，出餐速度慢，體驗不太好。','味道偏鹹，跟預期有落差，CP值普通。','座位擁擠，用餐環境稍嫌吵雜。'],
+    1:['食物冷掉才上桌，服務態度也不佳，不會再訪。','價格偏高但份量少，覺得不太划算。','衛生狀況不太理想，讓人有點卻步。','點餐等超久，出餐後也涼了，體驗很差。'],
+  }
+};
+const AUTHOR_POOL = ['旅人A','在地饕客','週末散步者','背包客小陳','愛拍照的M','親子出遊媽媽','毛孩爸爸','單車旅人','美食探店員','假日走跳族','在地學生','退休遊山玩水中','外地遊客','老饕本人','初次到訪者','兩貓一狗的家'];
+const SUSPICIOUS_CLAUSES = ['服務很好','餐點美味','環境舒適','風景很美','會想再訪一次','很推薦給大家','CP值很高','員工很親切'];
+
+function hashStr(str){ let h=0; for(let i=0;i<str.length;i++){ h=(h*31+str.charCodeAt(i))|0; } return h; }
+function mulberry32(seed){
+  return function(){
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = (t + Math.imul(t ^ t >>> 7, 61 | t)) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function genSuspiciousText(rng){
+  const pool = SUSPICIOUS_CLAUSES.slice();
+  for(let i=pool.length-1;i>0;i--){ const j=Math.floor(rng()*(i+1)); [pool[i],pool[j]]=[pool[j],pool[i]]; }
+  return pool.slice(0,3).join('，') + '。';
+}
+// 依景點的評論可信度等級模擬星等分布：可信度越低，五星評論比例越不自然地集中
+function generateReviews(s){
+  const rng = mulberry32(hashStr(s.id));
+  const cat = s.type==='attraction' ? 'attraction' : 'restaurant';
+  const dist = s.auth.level==='high' ? {5:0.55,4:0.27,3:0.10,2:0.05,1:0.03}
+             : s.auth.level==='mid'  ? {5:0.68,4:0.18,3:0.07,2:0.04,1:0.03}
+             :                          {5:0.90,4:0.05,3:0.02,2:0.01,1:0.02};
+  const total = 24; // 樣本數拉大，讓低星等桶在高可信度地點也有機會出現足夠樣本可供比對
+  const counts = {}; let assigned=0;
+  [5,4,3,2,1].forEach(star=>{ const c=Math.round(dist[star]*total); counts[star]=c; assigned+=c; });
+  counts[5] += (total-assigned); // 補齊四捨五入誤差
+
+  let suspiciousLeft = s.auth.level==='low' ? 9 : s.auth.level==='mid' ? 4 : 0;
+  const reviews = [];
+  [5,4,3,2,1].forEach(star=>{
+    const templates = REVIEW_TEMPLATES[cat][star];
+    for(let i=0;i<counts[star];i++){
+      const author = AUTHOR_POOL[Math.floor(rng()*AUTHOR_POOL.length)];
+      let text, credible=true, flagReason=null;
+      if(star===5 && suspiciousLeft>0){
+        text = genSuspiciousText(rng);
+        credible = false;
+        flagReason = '文字結構與其他評論高度相似，疑似樣板貼文';
+        suspiciousLeft--;
+      } else {
+        text = templates[Math.floor(rng()*templates.length)];
+      }
+      reviews.push({author, stars:star, text, credible, flagReason});
+    }
+  });
+  return reviews;
+}
+
+// 產出「優點（5星）／缺點（1星，含2星補足）」並排摘要，附可信度篩選與星等分布
+function renderReviewExplorer(s){
+  const all = generateReviews(s);
+  const credible = all.filter(r=>r.credible);
+  const filteredOutCount = all.length - credible.length;
+
+  const distCounts = {5:0,4:0,3:0,2:0,1:0};
+  all.forEach(r=>distCounts[r.stars]++);
+  const maxCount = Math.max(...Object.values(distCounts));
+  const distBarsHTML = [5,4,3,2,1].map(star=>{
+    const w = maxCount ? Math.round(distCounts[star]/maxCount*100) : 0;
+    return `<div class="dist-row"><span class="dist-star">${star}★</span><div class="dist-track"><div class="dist-fill" style="width:${w}%;"></div></div><span class="dist-num">${distCounts[star]}</span></div>`;
+  }).join('');
+
+  const pros = credible.filter(r=>r.stars===5).slice(0,4);
+  const cons = credible.filter(r=>r.stars<=2).sort((a,b)=>a.stars-b.stars).slice(0,4);
+
+  function reviewItemHTML(r){
+    return `<div class="review-item"><div class="review-item-head"><b>${r.author}</b><span class="stars" style="font-size:11px;">${'★'.repeat(r.stars)}</span></div><div>${r.text}</div></div>`;
+  }
+
+  return `
+    <div class="review-explorer">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+        <b style="font-size:13px;">評論怎麼說（優點 vs 缺點）</b>
+        <span style="font-size:11px;color:var(--ink-400);">已篩選 ${credible.length} 則可信評論${filteredOutCount?`，略過 ${filteredOutCount} 則疑似樣板/灌水評論`:''}</span>
+      </div>
+      <div class="dist-chart">${distBarsHTML}</div>
+      <div class="review-cols">
+        <div class="review-col">
+          <div class="review-col-title good">👍 優點怎麼說（5★）</div>
+          ${pros.length ? pros.map(reviewItemHTML).join('') : '<div class="review-empty">此可信度等級下暫無足夠 5★ 評論樣本</div>'}
+        </div>
+        <div class="review-col">
+          <div class="review-col-title bad">👎 缺點怎麼說（1-2★）</div>
+          ${cons.length ? cons.map(reviewItemHTML).join('') : '<div class="review-empty">幾乎沒有中低分評論，是評分分布較不自然的訊號之一</div>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+function openDetail(id){
+  const s = spotById(id);
+  const groupWarn = state.people > s.groupMax
+    ? `<div class="group-warn">⚠️ 目前設定 ${state.people} 人同行，此地點建議容納人數為 ${s.groupMax} 人以內，建議事先電話確認或分批前往。</div>` : '';
+  const suit = todaySuitability(s);
+  const suitHTML = suit ? `<div class="group-warn" style="background:${suit.good?'#e5f6ec':'#fdf3dd'};color:${suit.good?'var(--good)':'#8a6710'};">${suit.good?'🟢 今天適合去':'🟡 今天要留意'}：${suit.reasons.join('；')}（示範模擬，非即時氣象／海況資料）</div>` : '';
+  const reasonsHTML = s.auth.reasons.map(r=>`<li>${r.ok?'✅':'⚠️'} ${r.text}</li>`).join('');
+  document.getElementById('modalBody').innerHTML = `
+    <button class="modal-close" id="modalCloseBtn">✕</button>
+    <h2>${TYPE_META[s.type].icon} ${s.name}</h2>
+    <div class="modal-meta"><span class="stars">${starStr(s.rating)}</span> · ${s.reviews.toLocaleString()} 則評論 · ${s.region} · ${s.price}</div>
+    <div class="tags" style="margin-bottom:12px;">${s.tags.map(t=>`<span class="mini-tag">${TAG_META[t].icon} ${TAG_META[t].label}</span>`).join('')}</div>
+    ${groupWarn}
+    ${suitHTML}
+    <div class="desc">${s.desc}</div>
+    <div class="auth-box">
+      <div class="score-line">
+        <div class="auth-score-num" style="color:${s.auth.level==='high'?'var(--good)':s.auth.level==='mid'?'var(--warn)':'var(--bad)'}">${s.auth.score}</div>
+        <div>
+          <div class="auth-badge ${authBadgeClass(s.auth.level)}">${authBadgeLabel(s.auth.level)}</div>
+          <div style="font-size:11.5px;color:var(--ink-400);margin-top:3px;">AI 評論真偽綜合評分（模擬邏輯：時間分布／用詞多樣性／帳號行為／評分情緒一致性）</div>
+        </div>
+      </div>
+      <ul class="reason-list">${reasonsHTML}</ul>
+    </div>
+    ${renderReviewExplorer(s)}
+    <button class="btn btn-primary itin-toggle" data-id="${s.id}" style="width:100%;padding:10px;">${state.itinerary.includes(s.id)?'✓ 已加入行程':'+ 加入行程'}</button>
+  `;
+  document.getElementById('modalBackdrop').classList.add('open');
+  document.getElementById('modalCloseBtn').onclick = closeDetail;
+  document.querySelector('#modalBody .itin-toggle').onclick = ()=>{ toggleItinerary(id); openDetail(id); };
+}
+function closeDetail(){ document.getElementById('modalBackdrop').classList.remove('open'); }
+document.getElementById('modalBackdrop').addEventListener('click', e=>{
+  if(e.target.id==='modalBackdrop') closeDetail();
+});
+
+/* =========================================================================
+   7. MAPS (Leaflet + OpenStreetMap tiles)
+   ========================================================================= */
+let map, map2;
+let markerLayer, routeLayer, routeLine;
+let mapsAvailable = false;
+let lastRouteBounds = null; // 手機版「地圖」分頁在切換顯示時，Leaflet 容器先前是 display:none（尺寸為 0），需要在切回可見時重新 fitBounds
+
+function mapFallbackHTML(){
+  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:8px;background:var(--sea-100);color:var(--sea-700);font-size:13px;text-align:center;padding:20px;">
+    🗺️ 地圖圖磚載入失敗（可能是網路受限或離線環境）<br><span style="font-size:12px;color:var(--ink-400);">篩選、行程與 AI 規劃功能不受影響，正式版將確保地圖服務穩定連線。</span></div>`;
+}
+
+// 地圖初始化獨立包在 try/catch：即使 Leaflet／地圖圖磚因網路環境無法載入，
+// 其餘篩選、路線演算法、AI 助手等功能仍應正常運作，不因地圖失敗而整個原型掛掉。
+function initMaps(){
+  try{
+    if(typeof L === 'undefined') throw new Error('Leaflet not loaded');
+    map = L.map('map', {zoomControl:true}).setView([23.7,121.0], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:18, attribution:'&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+
+    map2 = L.map('map2', {zoomControl:true}).setView([23.7,121.0], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom:18, attribution:'&copy; OpenStreetMap contributors'
+    }).addTo(map2);
+    routeLayer = L.layerGroup().addTo(map2);
+    mapsAvailable = true;
+  }catch(err){
+    console.warn('Map init skipped:', err.message);
+    document.getElementById('map').innerHTML = mapFallbackHTML();
+    document.getElementById('map2').innerHTML = mapFallbackHTML();
+    mapsAvailable = false;
+  }
+}
+
+function typeColor(type){ return type==='attraction' ? '#1789a3' : '#e08a1f'; }
+
+function renderMapMarkers(){
+  if(!mapsAvailable) return;
+  markerLayer.clearLayers();
+  const spots = filteredSpots();
+  spots.forEach(s=>{
+    const m = L.circleMarker([s.lat,s.lng], {
+      radius:7, color:'#fff', weight:2, fillColor:typeColor(s.type), fillOpacity:0.95
+    }).addTo(markerLayer);
+    m.bindPopup(`<b>${s.name}</b><br>${starStr(s.rating)} · ${s.region}<br>${authBadgeLabel(s.auth.level)}`);
+    m.on('click', ()=>openDetail(s.id));
+  });
+}
+
+/* =========================================================================
+   8. ITINERARY / ROUTE PLANNING (nearest-neighbor heuristic)
+   ========================================================================= */
+function renderStopList(){
+  document.getElementById('stopCountLabel').textContent = state.itinerary.length;
+  const wrap = document.getElementById('stopList');
+  if(!state.itinerary.length){
+    wrap.innerHTML = `<div class="empty-itin">尚未加入任何地點<br>回到「探索地點」把喜歡的餐廳／景點加進來吧！</div>`;
+    document.getElementById('generateRouteBtn').disabled = true;
+    return;
+  }
+  document.getElementById('generateRouteBtn').disabled = false;
+  wrap.innerHTML = state.itinerary.map((id,i)=>{
+    const s = spotById(id);
+    const warn = state.people > s.groupMax ? ' ⚠️人數超建議上限' : '';
+    return `<div class="stop-item" data-id="${id}">
+      <div class="stop-num">${i+1}</div>
+      <div>
+        <div class="stop-name">${s.name}</div>
+        <div class="stop-tags">${s.region} · ${TYPE_META[s.type].label}${warn}</div>
+      </div>
+      <button class="stop-remove" data-id="${id}">✕</button>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('.stop-remove').forEach(btn=>{
+    btn.onclick=()=>{ toggleItinerary(btn.dataset.id); };
+  });
+}
+
+function populateDepartureSelect(){
+  const sel = document.getElementById('departureSelect');
+  sel.innerHTML = DEPARTURES.map((d,i)=>`<option value="${i}">${d.name}</option>`).join('');
+}
+// 出發時間選單：06:00–15:00、每 30 分鐘一格，涵蓋一般全日遊到下午才出發的半日遊
+function populateStartTimeSelect(){
+  const sel = document.getElementById('startTimeSelect');
+  const opts = [];
+  for(let m=6*60; m<=15*60; m+=30){ opts.push(m); }
+  sel.innerHTML = opts.map(m=>`<option value="${m}" ${m===540?'selected':''}>${minutesToClock(m)}</option>`).join('');
+}
+// 找出 startTimeSelect 選單中最接近目標分鐘數的選項值（AI 聊天問出的出發時間可能不是整 30 分）
+function nearestStartTimeOption(targetMinutes){
+  const sel = document.getElementById('startTimeSelect');
+  let best=540, bestDiff=Infinity;
+  [...sel.options].forEach(o=>{
+    const v = Number(o.value);
+    const diff = Math.abs(v-targetMinutes);
+    if(diff<bestDiff){ bestDiff=diff; best=v; }
+  });
+  return best;
+}
+
+// 最近鄰演算法：從出發地開始，每次挑「距目前位置最近」的未訪問地點
+function planRoute(startPoint, spotIds){
+  const remaining = spotIds.map(spotById).slice();
+  const order = [];
+  let current = startPoint;
+  while(remaining.length){
+    let bestIdx=0, bestDist=Infinity;
+    remaining.forEach((s,i)=>{
+      const d = haversine(current, s);
+      if(d<bestDist){ bestDist=d; bestIdx=i; }
+    });
+    const next = remaining.splice(bestIdx,1)[0];
+    order.push({spot:next, distFromPrev:bestDist, crossesIsland: isIslandRegion(next.region)!==isIslandRegion(current.region) || (isIslandRegion(next.region) && isIslandRegion(current.region) && next.region!==current.region)});
+    current = next;
+  }
+  return order;
+}
+
+function estimateSegmentTime(distKm, ferry){
+  // 陸路直線距離備援估算（僅在道路路線服務無法取得時使用）：假設平均車速 40km/h，跨島另加船班/航班估計時間
+  const driveHours = distKm/40;
+  const extra = ferry ? 1.2 : 0; // 跨島渡輪/航班含候船/報到估計 1.2 小時
+  return driveHours + extra;
+}
+
+/* =========================================================================
+   時間表引擎：把「已排好順序的地點」轉換成含時鐘時間的一整天行程，
+   在合適的時段自動安插早午餐／午餐／下午茶／晚餐／（可選）宵夜。
+   ========================================================================= */
+const MEAL_WINDOWS = [
+  {key:'breakfast', label:'早午餐', icon:'🥐', start:8*60+30,  end:10*60+30, mealType:'breakfast'},
+  {key:'lunch',     label:'午餐',   icon:'🍱', start:11*60+30, end:13*60+30, mealType:'lunch'},
+  {key:'teatime',   label:'下午茶', icon:'🍰', start:14*60+30, end:16*60+30, mealType:'teatime'},
+  {key:'dinner',    label:'晚餐',   icon:'🍽️', start:17*60+30, end:19*60+30, mealType:'dinner'},
+  {key:'latenight', label:'宵夜／居酒屋', icon:'🍶', start:21*60, end:23*60, mealType:'latenight', optional:true},
+];
+function minutesToClock(mins){
+  mins = Math.round(mins) % (24*60);
+  if(mins<0) mins += 24*60;
+  const h = Math.floor(mins/60), m = mins%60;
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+}
+// 兩點間的粗估交通時間（分鐘）：時間表引擎不再重新呼叫道路路線 API（避免大量非同步請求拖慢排程），
+// 一律用直線距離＋estimateSegmentTime 概算，並在畫面上清楚標示這是粗估交通時間
+function crossesIslandBoundary(a,b){
+  return isIslandRegion(a.region)!==isIslandRegion(b.region) || (isIslandRegion(a.region) && isIslandRegion(b.region) && a.region!==b.region);
+}
+function travelEstimateMinutes(a,b){
+  return estimateSegmentTime(haversine(a,b), crossesIslandBoundary(a,b))*60;
+}
+// 就近尋找符合指定用餐時段的餐廳：優先用使用者已加入行程的餐廳，找不到才從全部景點資料庫搜尋
+function findNearestRestaurant(pos, mealType, usedIds, preferredPool){
+  const fromPreferred = (preferredPool||[]).filter(s=>!usedIds.has(s.id) && s.meal && s.meal.includes(mealType));
+  let candidates = fromPreferred;
+  if(!candidates.length){
+    const allMatching = SPOTS.filter(s=>s.type==='restaurant' && s.meal && s.meal.includes(mealType));
+    // 用餐不會自動幫使用者安排搭船／搭機跨島吃飯：目前在哪個「陸塊」（本島 or 特定離島），候選餐廳就只能在同一塊陸地上找
+    const sameLandmass = pos.region
+      ? allMatching.filter(s => isIslandRegion(pos.region) ? s.region===pos.region : !isIslandRegion(s.region))
+      : allMatching;
+    if(pos.region){
+      const regionMatching = sameLandmass.filter(s=>s.region===pos.region);
+      // 這個地區資料庫裡本來就有符合的餐廳：只在同地區內找「還沒用過」的——找不到就代表選項已經用完了，
+      // 不要為了硬湊而跨到隔壁地區（直線距離看似不遠，實際上可能隔了一片山，開車要好幾小時）。
+      // 只有當這個地區完全沒有符合這個時段的餐廳資料（資料涵蓋不足）時，才放寬到本島其他地區搜尋。
+      candidates = regionMatching.length ? regionMatching.filter(s=>!usedIds.has(s.id)) : sameLandmass.filter(s=>!usedIds.has(s.id));
+    } else {
+      candidates = sameLandmass.filter(s=>!usedIds.has(s.id));
+    }
+  }
+  if(!candidates.length) return null;
+  let best=null, bestDist=Infinity, bestScore=-Infinity;
+  candidates.forEach(s=>{
+    const dist = haversine(pos, s);
+    const score = s.rating*(s.auth.score/100) - dist/40; // 距離越近、評分與可信度越高越優先
+    if(score>bestScore){ bestScore=score; best=s; bestDist=dist; }
+  });
+  if(bestDist > 80) return null; // 直線距離超過 80 公里就不建議硬塞，改標示「附近沒有符合的餐廳」
+  return best;
+}
+// 把已排序的 order（來自 planRoute，可能已被 generateRoute 用真實道路資料覆蓋過距離）轉換成含時鐘的一日時間表，
+// 在合適的時間點自動安插用餐；使用者原本就加入行程的餐廳會被優先拿來對應時段，而不是被忽略或重複安排。
+function buildTimetable(order, dep, startMinutes, includeLateNight){
+  const windows = MEAL_WINDOWS.filter(w=>!w.optional || includeLateNight);
+  const pending = windows.slice();
+  const attractionLegs = order.filter(l=>l.spot.type==='attraction');
+  const userRestaurants = order.filter(l=>l.spot.type==='restaurant').map(l=>l.spot);
+
+  let clock = startMinutes;
+  let pos = {lat:dep.lat, lng:dep.lng, region:null};
+  const usedIds = new Set();
+  const timeline = [{kind:'depart', time:clock, name:dep.name}];
+  let idx = 0;
+
+  // 如果行程一開始就要搭船／搭機跨島（例如整天都在小琉球），先把這段跨島移動處理掉，
+  // 不要卡在「本島先吃早餐」——實務上通常會先過去，再視島上有沒有符合的店家安排用餐
+  if(attractionLegs.length && crossesIslandBoundary(pos, attractionLegs[0].spot)){
+    const firstLeg = attractionLegs[0];
+    const travelMin = travelEstimateMinutes(pos, firstLeg.spot);
+    timeline.push({kind:'travel', minutes:travelMin, ferry:true});
+    clock += travelMin;
+    const stayMin = firstLeg.spot.dur || 90;
+    timeline.push({kind:'visit', spot:firstLeg.spot, arrive:clock, depart:clock+stayMin});
+    clock += stayMin;
+    pos = firstLeg.spot;
+    idx = 1;
+  }
+
+  function insertMeal(win){
+    if(clock < win.start){
+      const idleMin = win.start - clock;
+      if(idleMin>0.5) timeline.push({kind:'idle', minutes:idleMin});
+      clock = win.start;
+    }
+    const candidate = findNearestRestaurant(pos, win.mealType, usedIds, userRestaurants);
+    if(candidate){
+      const travelMin = travelEstimateMinutes(pos, candidate);
+      if(travelMin>0.5) timeline.push({kind:'travel', minutes:travelMin, ferry:crossesIslandBoundary(pos,candidate)});
+      clock += travelMin;
+      const stayMin = candidate.dur || 60;
+      timeline.push({kind:'meal', window:win, spot:candidate, arrive:clock, depart:clock+stayMin});
+      clock += stayMin;
+      pos = candidate;
+      usedIds.add(candidate.id);
+    } else {
+      timeline.push({kind:'warning', window:win, text:`附近沒有符合「${win.label}」的餐廳資料，建議自行安排`});
+    }
+  }
+
+  while(idx < attractionLegs.length || pending.length){
+    const nextWindow = pending[0];
+    const nextLeg = attractionLegs[idx];
+    let doMealNow = false;
+    if(nextWindow && !nextLeg){
+      doMealNow = true; // 景點都走完了，還有用餐時段沒排 -> 直接安插
+    } else if(nextWindow && nextLeg){
+      const travelMin = travelEstimateMinutes(pos, nextLeg.spot);
+      if(clock + travelMin >= nextWindow.start) doMealNow = true; // 照原順序走下去會錯過這個用餐時段 -> 先吃飯
+    }
+    if(doMealNow){
+      insertMeal(nextWindow);
+      pending.shift();
+      continue;
+    }
+    const leg = attractionLegs[idx];
+    const travelMin = travelEstimateMinutes(pos, leg.spot);
+    if(travelMin>0.5) timeline.push({kind:'travel', minutes:travelMin, ferry:crossesIslandBoundary(pos,leg.spot)});
+    clock += travelMin;
+    const stayMin = leg.spot.dur || 90;
+    timeline.push({kind:'visit', spot:leg.spot, arrive:clock, depart:clock+stayMin});
+    clock += stayMin;
+    pos = leg.spot;
+    idx++;
+  }
+  return {timeline, endClock:clock};
+}
+function renderTimetable(result){
+  const rows = result.timeline.map(ev=>{
+    if(ev.kind==='depart') return `<div class="tt-row tt-depart"><span class="tt-time">${minutesToClock(ev.time)}</span><span class="tt-body">🚩 從 <b>${ev.name}</b> 出發</span></div>`;
+    if(ev.kind==='travel') return ev.ferry
+      ? `<div class="tt-row tt-travel"><span class="tt-time"></span><span class="tt-body">⛴️ 需搭乘跨島船班／航班，含候船約 ${Math.round(ev.minutes)} 分鐘（粗估，實際以官方班表為準）</span></div>`
+      : `<div class="tt-row tt-travel"><span class="tt-time"></span><span class="tt-body">🚗 移動約 ${Math.round(ev.minutes)} 分鐘（粗估交通時間）</span></div>`;
+    if(ev.kind==='idle') return `<div class="tt-row tt-idle"><span class="tt-time"></span><span class="tt-body">⏳ 空檔／自由活動約 ${Math.round(ev.minutes)} 分鐘</span></div>`;
+    if(ev.kind==='visit') return `<div class="tt-row tt-visit"><span class="tt-time">${minutesToClock(ev.arrive)}–${minutesToClock(ev.depart)}</span><span class="tt-body">📍 <b>${ev.spot.name}</b>　<span class="tt-sub">建議停留 ${ev.spot.dur||90} 分鐘 · ${ev.spot.region}</span></span></div>`;
+    if(ev.kind==='meal') return `<div class="tt-row tt-meal"><span class="tt-time">${minutesToClock(ev.arrive)}–${minutesToClock(ev.depart)}</span><span class="tt-body">${ev.window.icon} <b>${ev.window.label}：${ev.spot.name}</b>　<span class="tt-sub">建議停留 ${ev.spot.dur||60} 分鐘</span></span></div>`;
+    if(ev.kind==='warning') return `<div class="tt-row tt-warning"><span class="tt-time"></span><span class="tt-body">⚠️ ${ev.window.icon} ${ev.text}</span></div>`;
+    return '';
+  }).join('');
+  return `<div class="timetable">${rows}<div class="tt-row tt-end"><span class="tt-time">${minutesToClock(result.endClock)}</span><span class="tt-body">🏁 行程大約結束，準備賦歸或返回住宿</span></div></div>`;
+}
+
+// 呼叫開源路網服務 OSRM（router.project-osrm.org 公開示範主機，免金鑰）取得「貼著實際道路」的路線幾何、
+// 分段距離與車程時間。這只是給原型示範用的公開測試伺服器，正式產品應改用 Google Routes API 或自架 OSRM。
+async function fetchRoadRoute(points){
+  const coordStr = points.map(p=>`${p.lng},${p.lat}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+  // 設 7 秒逾時：離線／服務被擋／龜速時要能快速回退，不要讓使用者一直卡在「查詢中」
+  const controller = new AbortController();
+  const timeoutId = setTimeout(()=>controller.abort(), 7000);
+  let res;
+  try{
+    res = await fetch(url, {signal: controller.signal});
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  if(!res.ok) throw new Error('OSRM HTTP '+res.status);
+  const data = await res.json();
+  if(data.code!=='Ok' || !data.routes || !data.routes.length) throw new Error('OSRM 無可用路線');
+  const route = data.routes[0];
+  return {
+    latlngs: route.geometry.coordinates.map(c=>[c[1],c[0]]), // GeoJSON 是 [lng,lat]，Leaflet 要 [lat,lng]
+    legDistKm: route.legs.map(l=>l.distance/1000),
+    legHours: route.legs.map(l=>l.duration/3600),
+  };
+}
+
+async function generateRoute(){
+  if(!state.itinerary.length) return;
+  const depIdx = Number(document.getElementById('departureSelect').value);
+  const dep = DEPARTURES[depIdx];
+  const order = planRoute(dep, state.itinerary); // 先用直線距離做最近鄰排序，決定「去程順序」
+
+  const genBtn = document.getElementById('generateRouteBtn');
+  const originalBtnText = genBtn.textContent;
+  genBtn.textContent = '🛰️ 查詢實際道路路線中…';
+  genBtn.disabled = true;
+
+  // 把整段行程切成「同一塊陸地」的連續路段，路段之間如果跨島／跨海就不查道路路線，只用直線＋估算時間表示
+  const chunks = [];
+  let current = { points:[{lat:dep.lat,lng:dep.lng}], legIdxs:[] };
+  order.forEach((leg,i)=>{
+    if(leg.crossesIsland){
+      if(current.points.length>1) chunks.push(current);
+      chunks.push({ ferry:true, from:current.points[current.points.length-1], to:{lat:leg.spot.lat,lng:leg.spot.lng} });
+      current = { points:[{lat:leg.spot.lat,lng:leg.spot.lng}], legIdxs:[] };
+    } else {
+      current.points.push({lat:leg.spot.lat, lng:leg.spot.lng});
+      current.legIdxs.push(i);
+    }
+  });
+  if(current.points.length>1) chunks.push(current);
+
+  const roadLegInfo = {}; // legIdx -> {distKm, hours}（來自 OSRM 的真實道路資料）
+  const chunkPolylines = [];
+  for(const chunk of chunks){
+    if(chunk.ferry){
+      chunkPolylines.push({latlngs:[[chunk.from.lat,chunk.from.lng],[chunk.to.lat,chunk.to.lng]], ferry:true});
+      continue;
+    }
+    try{
+      const result = await fetchRoadRoute(chunk.points);
+      chunkPolylines.push({latlngs:result.latlngs, ferry:false, roadBased:true});
+      chunk.legIdxs.forEach((legIdx,i)=>{ roadLegInfo[legIdx] = {distKm:result.legDistKm[i], hours:result.legHours[i]}; });
+    }catch(err){
+      console.warn('道路路線查詢失敗，改用直線距離估算：', err.message);
+      chunkPolylines.push({latlngs:chunk.points.map(p=>[p.lat,p.lng]), ferry:false, roadBased:false});
+    }
+  }
+
+  // 若拿到真實道路資料，用它覆蓋原本用直線距離做的估算
+  order.forEach((leg,i)=>{
+    if(roadLegInfo[i]){ leg.distFromPrev = roadLegInfo[i].distKm; leg.driveHours = roadLegInfo[i].hours; leg.roadBased = true; }
+  });
+
+  let totalDist=0, totalTime=0;
+  order.forEach(leg=>{
+    totalDist += leg.distFromPrev;
+    totalTime += leg.roadBased ? leg.driveHours : estimateSegmentTime(leg.distFromPrev, leg.crossesIsland);
+  });
+
+  if(mapsAvailable){
+    routeLayer.clearLayers();
+    L.marker([dep.lat,dep.lng], {title:dep.name}).addTo(routeLayer).bindPopup(`<b>🚩 出發：${dep.name}</b>`);
+    chunkPolylines.forEach(c=>{
+      L.polyline(c.latlngs, {
+        color: c.ferry ? '#e08a1f' : '#1789a3',
+        weight: c.ferry ? 3 : 4,
+        dashArray: c.ferry ? '2 8' : (c.roadBased ? null : '2 8'), // 只有無法取得道路資料時才用虛線提醒是直線估算
+      }).addTo(routeLayer);
+    });
+    order.forEach((leg,i)=>{
+      const m = L.circleMarker([leg.spot.lat, leg.spot.lng], {radius:8, color:'#fff', weight:2, fillColor:'#e08a1f', fillOpacity:0.95}).addTo(routeLayer);
+      m.bindPopup(`<b>${i+1}. ${leg.spot.name}</b><br>距上一站約 ${leg.distFromPrev.toFixed(1)} 公里`);
+    });
+    const allLatLngs = [[dep.lat,dep.lng], ...order.map(l=>[l.spot.lat,l.spot.lng])];
+    lastRouteBounds = L.latLngBounds(allLatLngs);
+    map2.fitBounds(lastRouteBounds, {padding:[40,40]});
+  }
+
+  // Result：改成含時鐘時間的完整一日時間表，在合適時段自動安插用餐
+  const startMinutes = Number(document.getElementById('startTimeSelect').value);
+  const includeLateNight = document.getElementById('enableLateNight').checked;
+  const tt = buildTimetable(order, dep, startMinutes, includeLateNight);
+
+  const resultEl = document.getElementById('routeResult');
+  let html = `<h3 style="margin-bottom:4px;">建議時間表</h3>`;
+  const spanHours = (tt.endClock - startMinutes)/60;
+  if(spanHours > 15){
+    html += `<div class="group-warn" style="margin-bottom:10px;">⚠️ 這個行程排下來大約要 ${spanHours.toFixed(1)} 小時，單日恐怕太趕，建議拆成兩天，或移除部分景點。</div>`;
+  }
+  html += renderTimetable(tt);
+  resultEl.innerHTML = html;
+
+  // Summary
+  const days = Math.max(1, Math.ceil(spanHours/14)); // 以「一天大約可安排 14 小時（含用餐）」概算建議天數
+  document.getElementById('itinSummary').style.display='flex';
+  document.getElementById('sumStops').textContent = order.length;
+  document.getElementById('sumDist').textContent = totalDist.toFixed(0)+' km';
+  document.getElementById('sumTime').textContent = totalTime.toFixed(1)+' 小時';
+  document.getElementById('sumDays').textContent = days+' 天建議';
+
+  genBtn.textContent = originalBtnText;
+  genBtn.disabled = false;
+}
+
+document.getElementById('generateRouteBtn').addEventListener('click', generateRoute);
+
+/* =========================================================================
+   9. AI PLANNER（規則式關鍵字解析模擬）
+   ========================================================================= */
+const REGION_KEYWORDS = {
+  '北部':['台北','新北','基隆','宜蘭','淡水','九份','陽明山','礁溪','101'],
+  '中部':['台中','南投','彰化','雲林','日月潭','清境','阿里山','嘉義','埔里'],
+  '南部':['台南','高雄','屏東','墾丁','旗津','安平'],
+  '東部':['花蓮','台東','太魯閣','七星潭','池上'],
+  '離島-澎湖':['澎湖','馬公','吉貝'],
+  '離島-金門':['金門'],
+  '離島-小琉球':['小琉球','琉球嶼'],
+  '離島-其他':['綠島','蘭嶼'],
+};
+const TAG_KEYWORDS = {
+  pet:['毛小孩','寵物','狗','貓','毛孩'],
+  kid:['親子','小孩','孩子','小朋友','兒童'],
+  couple:['情侶','約會','浪漫','蜜月'],
+  friends:['朋友','好友','閨蜜','同事'],
+  elder:['長輩','爸媽','父母','阿公','阿嬤'],
+  adventure:['探險','健行','爬山','戶外','浮潛','秘境'],
+  igphoto:['拍照','打卡','文青','網美'],
+  foodie:['美食','小吃','吃貨','覓食'],
+  free:['免費','省錢','小資'],
+  rainy:['雨天','下雨'],
+};
+
+function parseAIQuery(text){
+  const t = text;
+  let regions = [];
+  Object.entries(REGION_KEYWORDS).forEach(([region,kws])=>{
+    if(kws.some(k=>t.includes(k))) regions.push(region);
+  });
+  let tags = [];
+  Object.entries(TAG_KEYWORDS).forEach(([tag,kws])=>{
+    if(kws.some(k=>t.includes(k))) tags.push(tag);
+  });
+  let days = 1;
+  const dayMatch = t.match(/(\d+)\s*天/);
+  const nightMatch = t.match(/(\d+)\s*夜/);
+  if(dayMatch) days = Number(dayMatch[1]);
+  else if(nightMatch) days = Number(nightMatch[1])+1;
+  else if(t.includes('半日')) days = 0.5;
+  else if(t.includes('一日') || t.includes('一天')) days = 1;
+
+  let people = 2;
+  const peopleMatch = t.match(/(\d+)\s*人/);
+  if(peopleMatch) people = Number(peopleMatch[1]);
+
+  return {regions, tags, days, people};
+}
+
+// 嘗試從文字裡抓出「幾點出發」，支援「早上/上午/中午/下午/晚上/傍晚 X點(半)?」與「H:MM」兩種常見講法
+// 抓不到就回傳 null——這樣呼叫端才知道要主動追問，而不是偷偷套一個使用者沒說過的預設時間
+function parseStartTime(text){
+  let m = text.match(/(早上|上午|中午|下午|晚上|傍晚)?\s*(\d{1,2})[:：]?(\d{2})?\s*點(半)?/);
+  if(m){
+    const [, period, hStr, mStr, half] = m;
+    let h = Number(hStr);
+    if(!isNaN(h) && h<=23){
+      if((period==='下午'||period==='晚上'||period==='傍晚') && h<12) h += 12;
+      if(period==='中午' && h<12) h += 12;
+      const minute = mStr ? Number(mStr) : (half ? 30 : 0);
+      return h*60+minute;
+    }
+  }
+  m = text.match(/(\d{1,2}):(\d{2})/);
+  if(m){
+    const h = Number(m[1]), minute = Number(m[2]);
+    if(h<=23 && minute<60) return h*60+minute;
+  }
+  return null;
+}
+
+// 依需求所在地區，找出最接近的「出發地」預設值（示範用簡化邏輯）
+function nearestDeparture(regions){
+  if(!regions || !regions.length) return DEPARTURES[0];
+  const regionSpots = SPOTS.filter(s=>regions.includes(s.region));
+  if(!regionSpots.length) return DEPARTURES[0];
+  const avgLat = regionSpots.reduce((a,s)=>a+s.lat,0)/regionSpots.length;
+  const avgLng = regionSpots.reduce((a,s)=>a+s.lng,0)/regionSpots.length;
+  let best=DEPARTURES[0], bestD=Infinity;
+  DEPARTURES.forEach(d=>{ const dist=haversine(d,{lat:avgLat,lng:avgLng}); if(dist<bestD){bestD=dist;best=d;} });
+  return best;
+}
+
+// 產生「多種玩法」路線方案（悠閒／景色優先／美食＋景點），呼應「不是只給一條路」的設計。
+// 重點：三個方案共用同一個「地區＋使用者明講的標籤」候選池，但「旅遊人格」只用來加權排序（不再硬性篩選），
+// 而且每個方案各自從不同子池（不限類型／只景點／只餐廳）挑選，這樣就算候選地點不多，三個方案的組成也會明顯不同，
+// 不會因為候選池被篩到只剩兩三個地點，就讓三種玩法選出一模一樣的地點與路線。
+function generateRouteVariants(parsed){
+  const persona = state.persona ? PERSONAS[state.persona] : null;
+  const explicitTags = parsed.tags.slice(); // 只用使用者文字裡明講的標籤限制候選池，人格標籤改用加權
+
+  let pool = SPOTS.filter(s=>{
+    if(parsed.regions.length && !parsed.regions.includes(s.region)) return false;
+    if(explicitTags.length && !explicitTags.some(t=>s.tags.includes(t))) return false;
+    return true;
+  });
+  if(!pool.length){
+    pool = SPOTS.filter(s=> (parsed.regions.length && parsed.regions.includes(s.region)) || (explicitTags.length && explicitTags.some(t=>s.tags.includes(t))));
+  }
+  if(!pool.length) pool = SPOTS.slice();
+
+  const dep = nearestDeparture(parsed.regions);
+  const baseTarget = persona ? persona.maxStops : Math.max(2, Math.round(parsed.days<1?2:parsed.days*3));
+  const personaBoost = s => (persona && persona.forceTag && s.tags.includes(persona.forceTag)) ? 1.4 : 1;
+
+  function buildVariant(label, icon, candidatePool, scoreFn, count){
+    let source = candidatePool.slice().sort((a,b)=>scoreFn(b)-scoreFn(a));
+    if(source.length < count){
+      const have = new Set(source.map(s=>s.id));
+      const extra = pool.filter(s=>!have.has(s.id)).sort((a,b)=>scoreFn(b)-scoreFn(a));
+      source = source.concat(extra); // 子池不夠時，用共用候選池補齊，但排序仍依該方案的評分邏輯
+    }
+    const picks = source.slice(0, Math.min(count, source.length));
+    const order = planRoute(dep, picks.map(p=>p.id));
+    const totalDist = order.reduce((a,l)=>a+l.distFromPrev,0);
+    const totalTime = order.reduce((a,l)=>a+estimateSegmentTime(l.distFromPrev,l.crossesIsland),0);
+    return {label, icon, dep, order, totalDist, totalTime, ids:picks.map(p=>p.id)};
+  }
+
+  // 評分高、離出發地近優先，且刻意降低「戶外探險」型地點的權重（悠閒訴求），並套用旅遊人格加權
+  const relaxScore  = s => (s.rating*(s.auth.score/100) - haversine(dep,s)/300) * (s.tags.includes('adventure')?0.8:1) * personaBoost(s);
+  const scenicScore = s => s.rating * ((s.tags.includes('igphoto')||s.tags.includes('adventure'))?1.25:1) * personaBoost(s);
+  const foodieScore = s => s.rating * (s.tags.includes('foodie')?1.3:1) * personaBoost(s);
+
+  // 三個方案各自從不同子池出發（悠閒＝不限類型／景色優先＝以景點為主／美食＋景點＝以餐廳為主，不足再從共用池補齊）
+  const relaxPool  = pool;
+  const scenicPool = pool.filter(s=>s.type==='attraction');
+  const foodiePool = pool.filter(s=>s.type==='restaurant');
+
+  return [
+    buildVariant('悠閒路線','🟢', relaxPool,  relaxScore,  Math.max(2, baseTarget-1)),
+    buildVariant('景色優先','🔵', scenicPool, scenicScore, baseTarget),
+    buildVariant('美食＋景點','🟠', foodiePool, foodieScore, baseTarget),
+  ];
+}
+
+function addChatMsg(role, html){
+  const log = document.getElementById('chatLog');
+  const div = document.createElement('div');
+  div.className = 'msg '+role;
+  div.innerHTML = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+// 把 buildTimetable 的結果濃縮成聊天卡片裡放得下的單行摘要（只留出發／用餐／景點，略過移動與空檔細節）
+function compactTimetableSummary(tt){
+  return tt.timeline.map(ev=>{
+    if(ev.kind==='depart') return `🚩${minutesToClock(ev.time)}出發`;
+    if(ev.kind==='visit')  return `📍${minutesToClock(ev.arrive)} ${ev.spot.name}`;
+    if(ev.kind==='meal')   return `${ev.window.icon}${minutesToClock(ev.arrive)} ${ev.spot.name}`;
+    if(ev.kind==='warning')return `⚠️ ${ev.window.label}無資料`;
+    return null;
+  }).filter(Boolean).join(' → ');
+}
+
+function askDepartureTime(parsed){
+  const regionTxt = parsed.regions.length? parsed.regions.join('、') : '全台';
+  const tagTxt = parsed.tags.length ? parsed.tags.map(t=>TAG_META[t].label).join('、') : (state.persona ? `${PERSONAS[state.persona].icon} ${PERSONAS[state.persona].label}` : '一般');
+  const html = `根據你的描述，我理解成：<b>${regionTxt}</b>、風格偏好<b>${tagTxt}</b>、同行 <b>${parsed.people} 人</b>。<br>你想幾點出發呢？我會依照這個時間，幫你把早午餐、午餐、下午茶跟晚餐的時段也一併排進去，給你一整天完整的行程，不會只丟幾個地點名稱給你。`;
+  const div = addChatMsg('bot', html);
+  const times = [['08:00',480],['09:00',540],['10:00',600],['12:00',720],['14:00',840]];
+  const chipsHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">` +
+    times.map(([label])=>`<button class="quick-chip time-reply-chip" data-label="${label}">${label} 出發</button>`).join('') + `</div>`;
+  div.insertAdjacentHTML('beforeend', chipsHTML);
+  div.querySelectorAll('.time-reply-chip').forEach(btn=>{
+    btn.onclick = ()=> handleAIQuery(btn.dataset.label+' 出發');
+  });
+}
+
+function handleAIQuery(text){
+  addChatMsg('user', text.replace(/</g,'&lt;'));
+
+  if(state.pendingAIRequest){
+    const t = parseStartTime(text);
+    if(t!==null){
+      const parsed = state.pendingAIRequest;
+      parsed.startMinutes = t;
+      state.pendingAIRequest = null;
+      presentVariants(parsed);
+      return;
+    }
+    state.pendingAIRequest = null; // 使用者沒有直接回答時間，就把這句話當成全新需求重新解析
+  }
+
+  const parsed = parseAIQuery(text);
+  const detectedTime = parseStartTime(text);
+  if(detectedTime===null){
+    state.pendingAIRequest = parsed;
+    askDepartureTime(parsed);
+    return;
+  }
+  parsed.startMinutes = detectedTime;
+  presentVariants(parsed);
+}
+
+function presentVariants(parsed){
+  const variants = generateRouteVariants(parsed);
+
+  const regionTxt = parsed.regions.length? parsed.regions.join('、') : '全台';
+  const personaTxt = state.persona ? `${PERSONAS[state.persona].icon} ${PERSONAS[state.persona].label}` : null;
+  const tagTxt = parsed.tags.length ? parsed.tags.map(t=>TAG_META[t].label).join('、') : (personaTxt || '一般');
+  const dayTxt = parsed.days<1 ? '半日' : `${parsed.days} 天`;
+
+  let html = `理解成：<b>${regionTxt}</b>、風格偏好<b>${tagTxt}</b>、行程長度約 <b>${dayTxt}</b>、同行 <b>${parsed.people} 人</b>、<b>${minutesToClock(parsed.startMinutes)} 出發</b>。<br>我沒有只給你一條路，也不會只丟地點名稱——幫你把早餐到晚餐的時段都排好了，選一個喜歡的方案：`;
+  html += `<div class="itin-mini">`;
+  const seenSignatures = {}; // 偵測「不同方案挑出完全一樣的地點」，如實告知而不是假裝三種玩法都不同
+  const variantTimetables = variants.map(v => buildTimetable(v.order, v.dep, parsed.startMinutes, false));
+  variants.forEach((v,vi)=>{
+    const summary = v.ids.length ? compactTimetableSummary(variantTimetables[vi]) : '（此方案暫無符合地點，可調整需求再試）';
+    const sig = v.ids.slice().sort().join(',');
+    const dupOf = seenSignatures[sig];
+    if(dupOf===undefined) seenSignatures[sig] = v.label;
+    const dupNote = (dupOf!==undefined && v.ids.length)
+      ? `<div style="font-size:11px;color:var(--warn);">⚠️ 與「${dupOf}」地點相同——這個地區符合條件的地點目前較少，暫時排不出更不一樣的玩法</div>` : '';
+    html += `<div class="imini-card" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div style="display:flex;justify-content:space-between;width:100%;font-weight:700;"><span>${v.icon} ${v.label}</span><span style="font-weight:600;color:var(--ink-600);">${v.totalDist.toFixed(0)} km</span></div>
+      <div style="font-size:11.5px;color:var(--ink-600);line-height:1.6;">${summary}</div>
+      ${dupNote}
+      <button class="add-all-btn variant-btn" data-vi="${vi}" ${v.ids.length?'':'disabled'} style="align-self:flex-end;">選這個方案 →</button>
+    </div>`;
+  });
+  html += `</div>`;
+
+  const div = addChatMsg('bot', html);
+  div.querySelectorAll('.variant-btn').forEach(btn=>{
+    btn.onclick = ()=>{
+      const v = variants[Number(btn.dataset.vi)];
+      state.itinerary = v.ids.slice();
+      setPeople(parsed.people || state.people);
+      const depIdx = DEPARTURES.findIndex(d=>d.name===v.dep.name);
+      document.getElementById('departureSelect').value = depIdx>=0 ? depIdx : 0;
+      document.getElementById('startTimeSelect').value = nearestStartTimeOption(parsed.startMinutes);
+      updateItinCount();
+      renderCardList(); renderStopList();
+      switchView('itinerary');
+      setTimeout(generateRoute, 100);
+      div.querySelectorAll('.variant-btn').forEach(b=>{ b.disabled=true; });
+      btn.textContent = '✓ 已選擇此方案';
+    };
+  });
+}
+
+function renderPersonaChips(){
+  const container = document.getElementById('personaChips');
+  container.innerHTML = `<span style="font-size:12px;color:var(--ink-400);align-self:center;margin-right:2px;">你的旅遊人格（可不選）：</span>` +
+    Object.entries(PERSONAS).map(([key,p])=>`<button class="chip persona-chip ${state.persona===key?'on':''}" data-key="${key}">${p.icon} ${p.label}</button>`).join('');
+  container.querySelectorAll('.persona-chip').forEach(btn=>{
+    btn.onclick = ()=>{
+      state.persona = (state.persona===btn.dataset.key) ? null : btn.dataset.key;
+      renderPersonaChips();
+    };
+  });
+}
+
+// 模擬「下雨了」動態重新規劃：把行程中偏戶外／探險的景點，換成同地區具「雨天備案」標籤的地點
+function simulateRainReplan(){
+  if(!state.itinerary.length){ return; }
+  const swapped = [];
+  const noAlt = [];
+  state.itinerary = state.itinerary.map(id=>{
+    const s = spotById(id);
+    const needsSwap = s.tags.includes('adventure') && !s.tags.includes('rainy');
+    if(!needsSwap) return id;
+    const alt = SPOTS.find(a => a.region===s.region && a.tags.includes('rainy') && a.id!==id && !state.itinerary.includes(a.id));
+    if(alt){ swapped.push({from:s.name, to:alt.name}); return alt.id; }
+    noAlt.push(s.name);
+    return id;
+  });
+  updateItinCount();
+  renderCardList(); renderStopList();
+  const note = document.getElementById('rainNote');
+  if(swapped.length){
+    note.innerHTML = `☔ 已為你調整 ${swapped.length} 個戶外行程為雨天備案：<br>` + swapped.map(x=>`${x.from} → ${x.to}`).join('<br>');
+    generateRoute();
+  } else if(noAlt.length){
+    note.innerHTML = `☔ 「${noAlt.join('、')}」較不適合雨天前往，但此原型資料庫中該地區暫無室內備案地點，正式版會即時搜尋鄰近室內／雨天備案選項。`;
+  } else {
+    note.innerHTML = `目前行程沒有偏戶外／探險型的地點需要調整，維持原計畫 🙂`;
+  }
+}
+
+function initAI(){
+  renderPersonaChips();
+  const greet = `你好，我是行程規劃助手 🤖（原型模擬）。告訴我你今天想怎麼玩、想帶誰去、大概幾天，我不會只給你一條路，會幫你想出幾種不同玩法！`;
+  addChatMsg('bot', greet);
+
+  const quick = [
+    '帶毛小孩去墾丁玩兩天一夜',
+    '台北出發，情侶約會半日遊',
+    '金門親子景點推薦',
+    '花蓮太魯閣戶外探險兩天',
+    '澎湖三五好友三天兩夜',
+  ];
+  document.getElementById('quickChips').innerHTML = quick.map(q=>`<button class="quick-chip">${q}</button>`).join('');
+  document.querySelectorAll('.quick-chip').forEach(btn=>{
+    btn.onclick = ()=> handleAIQuery(btn.textContent);
+  });
+
+  document.getElementById('chatSend').onclick = sendChat;
+  document.getElementById('chatInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter') sendChat();
+  });
+}
+function sendChat(){
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if(!text) return;
+  input.value='';
+  handleAIQuery(text);
+}
+
+/* =========================================================================
+   10. VIEW SWITCHING
+   ========================================================================= */
+function updateItinCount(){
+  document.querySelectorAll('.itin-count').forEach(el=>{ el.textContent = state.itinerary.length; });
+}
+function switchView(view){
+  state.activeView = view;
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+view).classList.add('active');
+  // 頂部分頁列（桌面）與底部分頁列（手機）共用 data-view，切換時兩邊的 active 狀態都要同步
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
+  closeFilterDrawer();
+  if(view==='explore' || view==='itinerary'){
+    setTimeout(()=>{ map && map.invalidateSize(); map2 && map2.invalidateSize(); }, 60);
+  }
+}
+document.querySelectorAll('[data-view]').forEach(btn=>{
+  btn.onclick = ()=> switchView(btn.dataset.view);
+});
+
+/* =========================================================================
+   11. MOBILE APP UI — 篩選抽屜、列表/地圖切換、PWA 安裝與離線快取
+   ========================================================================= */
+// 篩選抽屜（手機版）：把桌面版側邊欄變成可從左側滑出的面板
+function openFilterDrawer(){
+  document.querySelector('.sidebar').classList.add('open');
+  document.getElementById('sidebarBackdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeFilterDrawer(){
+  const sidebar = document.querySelector('.sidebar');
+  if(sidebar) sidebar.classList.remove('open');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if(backdrop) backdrop.classList.remove('open');
+  document.body.style.overflow = '';
+}
+function initFilterDrawer(){
+  const openBtn = document.getElementById('openFilterBtn');
+  const closeBtn = document.getElementById('closeFilterBtn');
+  const applyBtn = document.getElementById('applyFilterBtn');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if(openBtn) openBtn.onclick = openFilterDrawer;
+  if(closeBtn) closeBtn.onclick = closeFilterDrawer;
+  if(applyBtn) applyBtn.onclick = closeFilterDrawer;
+  if(backdrop) backdrop.onclick = closeFilterDrawer;
+}
+
+// 列表／地圖 切換列（手機版）：探索頁與行程頁各自的地圖在窄螢幕預設隱藏，切換時才顯示並重新計算地圖尺寸
+function initPaneSwitch(containerSelector, invalidateFn){
+  const container = document.querySelector(containerSelector);
+  if(!container) return;
+  const switchEl = container.querySelector(':scope > .pane-switch');
+  if(!switchEl) return;
+  switchEl.querySelectorAll('.pane-opt').forEach(btn=>{
+    btn.onclick = ()=>{
+      switchEl.querySelectorAll('.pane-opt').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const showMap = btn.dataset.pane==='map';
+      container.classList.toggle('show-map', showMap);
+      if(showMap) setTimeout(()=>{ invalidateFn && invalidateFn(); }, 80);
+    };
+  });
+}
+
+// 註冊 Service Worker：讓已造訪過的頁面在離線／訊號不佳時仍可開啟（地圖圖磚等外部資源仍需連線）
+// 需部署在 https:// 或 http://localhost 環境下才會生效，直接以 file:// 開啟時瀏覽器會略過註冊
+function initServiceWorker(){
+  if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
+    window.addEventListener('load', ()=>{
+      navigator.serviceWorker.register('sw.js').catch(err=>console.warn('Service worker 註冊失敗：', err.message));
+    });
+  }
+}
+
+/* =========================================================================
+   12. INIT
+   ========================================================================= */
+function init(){
+  initSidebar();
+  initMaps();
+  renderCardList();
+  renderMapMarkers();
+  populateDepartureSelect();
+  populateStartTimeSelect();
+  renderStopList();
+  initAI();
+  document.getElementById('rainReplanBtn').addEventListener('click', simulateRainReplan);
+  initFilterDrawer();
+  initPaneSwitch('#exploreMain', ()=> map && map.invalidateSize());
+  initPaneSwitch('#itinWrap', ()=>{
+    if(!map2) return;
+    map2.invalidateSize();
+    if(lastRouteBounds) map2.fitBounds(lastRouteBounds, {padding:[40,40]}); // 補回切換分頁前 0 尺寸時算錯的視野範圍
+  });
+  initServiceWorker();
+}
+init();
+</script>
+</body>
+</html>
