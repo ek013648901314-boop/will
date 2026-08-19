@@ -1297,7 +1297,9 @@ function findNearestRestaurant(pos, mealType, usedIds, preferredPool){
   let best=null, bestDist=Infinity, bestScore=-Infinity;
   candidates.forEach(s=>{
     const dist = haversine(pos, s);
-    const score = s.rating*(s.auth.score/100) - dist/40; // 距離越近、評分與可信度越高越優先
+    // Google 真實資料沒有模擬的評論真偽分數（s.auth 不存在），這種情況直接信任 Google 星等，權重視為滿分（1）
+    const authFactor = s.auth ? (s.auth.score/100) : 1;
+    const score = (s.rating||0)*authFactor - dist/40; // 距離越近、評分與可信度越高越優先
     if(score>bestScore){ bestScore=score; best=s; bestDist=dist; }
   });
   if(bestDist > 80) return null; // 直線距離超過 80 公里就不建議硬塞，改標示「附近沒有符合的餐廳」
