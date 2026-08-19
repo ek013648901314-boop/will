@@ -1398,7 +1398,36 @@ function renderTimetable(result){
 
 // 呼叫開源路網服務 OSRM（router.project-osrm.org 公開示範主機，免金鑰）取得「貼著實際道路」的路線幾何、
 // 分段距離與車程時間。這只是給原型示範用的公開測試伺服器，正式產品應改用 Google Routes API 或自架 OSRM。
+// 先試著走後端的 Google Directions 函式（真實道路路線＋真實路況估算車程）；
+// 金鑰未設定（501）、呼叫失敗、或逾時，就自動退回原本直接呼叫 OSRM 公開示範伺服器的做法，
+// 兩層都失敗的話，上層呼叫端（generateRoute）還有第三層直線距離估算可用，路線功能不會整個掛掉。
 async function fetchRoadRoute(points){
+  try{
+    return await fetchRoadRouteViaGoogle(points);
+  }catch(err){
+    console.warn('Google Directions 取得路線失敗，改用 OSRM：', err.message);
+    return await fetchRoadRouteViaOSRM(points);
+  }
+}
+
+async function fetchRoadRouteViaGoogle(points){
+  const pointsParam = points.map(p=>`${p.lat},${p.lng}`).join(';');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(()=>controller.abort(), 8000);
+  let res;
+  try{
+    res = await fetch(`/.netlify/functions/directions?points=${encodeURIComponent(pointsParam)}`, {signal: controller.signal});
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  if(res.status===501) throw new Error('GOOGLE_PLACES_API_KEY 尚未設定'); // 金鑰未設定，屬於預期中的狀態
+  if(!res.ok) throw new Error('Directions 函式回應狀態 '+res.status);
+  const data = await res.json();
+  if(!data.latlngs || !data.latlngs.length) throw new Error('Google Directions 沒有回傳可用路線');
+  return data; // 已經是 {latlngs, legDistKm, legHours} 的形狀，跟 OSRM 版本完全相容
+}
+
+async function fetchRoadRouteViaOSRM(points){
   const coordStr = points.map(p=>`${p.lng},${p.lat}`).join(';');
   const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
   // 設 7 秒逾時：離線／服務被擋／龜速時要能快速回退，不要讓使用者一直卡在「查詢中」
