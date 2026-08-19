@@ -521,6 +521,7 @@
           <div id="rainNote" style="font-size:12px;color:var(--sea-700);margin-top:6px;line-height:1.6;"></div>
 
           <div id="routeResult" style="margin-top:16px;"></div>
+          <div id="nearbySuggestions" style="margin-top:8px;"></div>
         </div>
         <div class="itinerary-right">
           <div id="map2"></div>
@@ -1563,9 +1564,88 @@ async function generateRoute(){
 
   genBtn.textContent = originalBtnText;
   genBtn.disabled = false;
+
+  // 沿途順路推薦：不 await，讓主路線先顯示出來，推薦清單用自己的載入提示非同步補上，不拖慢主流程
+  renderNearbySuggestions(order);
 }
 
 document.getElementById('generateRouteBtn').addEventListener('click', generateRoute);
+
+// 查詢行程中每個「真實地點」停靠站附近還有什麼順路可以去的真實景點／店家（Google Places Nearby Search），
+// 只對真實資料（source==='google'）的停靠站查詢——demo 假資料的座標查出來也會是真實店家，容易讓人誤以為
+// 整條 demo 行程都變真的了，所以刻意不對 demo 站點做這個功能。
+async function renderNearbySuggestions(order){
+  const container = document.getElementById('nearbySuggestions');
+  if(!container) return;
+
+  const realStops = order.filter(l=>l.spot.source==='google');
+  if(!realStops.length){
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = `<div style="font-size:12.5px;color:var(--ink-400);padding:8px 2px;">🔄 正在查詢沿途附近還有什麼順路可以去…</div>`;
+
+  const excludeIds = state.itinerary.join(',');
+  const sampledStops = realStops.slice(0, 5); // 最多取 5 站查附近，避免一次打太多 API
+
+  const results = await Promise.all(sampledStops.map(leg=>
+    fetch(`/.netlify/functions/places-search?mode=nearby&lat=${leg.spot.lat}&lng=${leg.spot.lng}&radius=700&region=${encodeURIComponent(leg.spot.region)}&exclude=${encodeURIComponent(excludeIds)}`)
+      .then(r=> r.ok ? r.json() : {spots:[]})
+      .then(d=>({near:leg.spot, spots:d.spots||[]}))
+      .catch(()=>({near:leg.spot, spots:[]}))
+  ));
+
+  const seen = new Set();
+  const suggestions = [];
+  results.forEach(({near, spots})=>{
+    spots.forEach(s=>{
+      if(seen.has(s.id) || state.itinerary.includes(s.id)) return;
+      seen.add(s.id);
+      suggestions.push({...s, nearName:near.name, distKm:haversine(near, s)});
+    });
+  });
+
+  if(!suggestions.length){
+    container.innerHTML = `<div style="font-size:12px;color:var(--ink-400);padding:6px 2px;">附近暫時沒有找到其他順路推薦地點</div>`;
+    return;
+  }
+
+  suggestions.sort((a,b)=>a.distKm-b.distKm);
+  const top = suggestions.slice(0, 8);
+  top.forEach(s=>{ if(!state.realSpots.find(x=>x.id===s.id)) state.realSpots.push(s); }); // 併入真實資料池，讓「加入行程」／地圖能正常運作
+
+  container.innerHTML = `<h3 style="margin:14px 0 8px;font-size:14px;">🧭 沿途順路可以去（Google 真實資料）</h3>` +
+    top.map(s=>`
+      <div class="stop-item nearby-item" data-id="${s.id}" style="cursor:pointer;">
+        <div class="stop-num" style="background:#1a56db;">${TYPE_META[s.type].icon}</div>
+        <div>
+          <div class="stop-name">${s.name}${s.rating!=null?` · ⭐${s.rating}`:''}</div>
+          <div class="stop-tags">距「${s.nearName}」約 ${s.distKm.toFixed(1)} 公里 · ${s.region}</div>
+        </div>
+        <button class="btn btn-ghost add-nearby-btn" data-id="${s.id}" style="margin-left:auto;flex-shrink:0;">+ 加入</button>
+      </div>`).join('');
+
+  container.querySelectorAll('.add-nearby-btn').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      toggleItinerary(btn.dataset.id);
+      btn.textContent = state.itinerary.includes(btn.dataset.id) ? '✓ 已加入（重新產生路線套用）' : '+ 加入';
+    };
+  });
+  container.querySelectorAll('.nearby-item').forEach(el=>{
+    el.onclick = ()=> openDetail(el.dataset.id);
+  });
+
+  // 地圖上用「空心藍圈」標示這些建議地點，跟正式行程站點的橘色實心標記做出區別
+  if(mapsAvailable){
+    top.forEach(s=>{
+      const m = L.circleMarker([s.lat,s.lng], {radius:6, color:'#1a56db', weight:2, fillColor:'#fff', fillOpacity:0.9}).addTo(routeLayer);
+      m.bindPopup(`<b>🧭 順路推薦：${s.name}</b><br>${s.rating!=null?'⭐'+s.rating+' · ':''}距「${s.nearName}」約 ${s.distKm.toFixed(1)} 公里`);
+      m.on('click', ()=>openDetail(s.id));
+    });
+  }
+}
 
 /* =========================================================================
    9. AI PLANNER（規則式關鍵字解析模擬）

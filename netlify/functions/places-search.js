@@ -140,6 +140,50 @@ async function searchOneQuery(textQuery, apiKey) {
   return { places: Array.isArray(data.places) ? data.places : [], error: null };
 }
 
+// 查詢某個座標附近的真實景點／餐廳（Google Places Nearby Search，New API），
+// 用在使用者排好行程之後，「沿途還有什麼順路的地方可以去」這個功能。
+async function handleNearby(params, apiKey, headers) {
+  const lat = Number(params.lat), lng = Number(params.lng);
+  if (!lat || !lng) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: '缺少或不合法的 lat/lng 參數' }) };
+  }
+  const radius = Math.min(Math.max(Number(params.radius) || 700, 100), 5000); // 100m ~ 5km 之間，預設 700m
+  const region = params.region || '';
+  const exclude = new Set((params.exclude || '').split(',').filter(Boolean));
+
+  try {
+    const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': FIELD_MASK,
+      },
+      body: JSON.stringify({
+        includedTypes: ['tourist_attraction', 'restaurant', 'cafe', 'museum', 'park'],
+        maxResultCount: 8,
+        locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius } },
+        languageCode: 'zh-TW',
+      }),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { statusCode: 502, headers, body: JSON.stringify({ error: `Nearby Search HTTP ${res.status}：${errText.slice(0, 300)}` }) };
+    }
+    const data = await res.json();
+    const spots = (data.places || [])
+      .map((raw) => {
+        const isRestaurant = (raw.types || []).some((t) => ['restaurant', 'cafe'].includes(t));
+        return normalizeSpot(raw, isRestaurant ? 'restaurant' : 'attraction', region, apiKey);
+      })
+      .filter(Boolean)
+      .filter((s) => !exclude.has(s.id));
+    return { statusCode: 200, headers, body: JSON.stringify({ spots }) };
+  } catch (err) {
+    return { statusCode: 502, headers, body: JSON.stringify({ error: 'Nearby Search 呼叫失敗：' + err.message }) };
+  }
+}
+
 exports.handler = async (event) => {
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
@@ -161,6 +205,13 @@ exports.handler = async (event) => {
   }
 
   const params = event.queryStringParameters || {};
+
+  // mode=nearby：查詢某個座標「附近」的真實景點／餐廳（用在行程排好之後，找沿途順路的地方），
+  // 跟原本依地區搜尋的邏輯分開處理，但共用同一支 normalizeSpot() 轉換格式。
+  if (params.mode === 'nearby') {
+    return handleNearby(params, apiKey, headers);
+  }
+
   const region = params.region;
   const type = params.type; // 'attraction' | 'restaurant' | undefined(both)
   if (!region || !REGION_TO_CITIES[region]) {
