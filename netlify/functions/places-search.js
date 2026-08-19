@@ -28,6 +28,7 @@ const FIELD_MASK = [
   'places.editorialSummary',
   'places.photos.name',
   'places.types',
+  'places.reviews', // 最多 5 則 Google 真實評論原文，給前端做「評論優缺點摘要」用（不是我們自己虛構的）
 ].join(',');
 
 // 這個 App 的地區分類（北部/中部/南部...）對應到用來搜尋的代表性縣市中文名稱。
@@ -50,18 +51,20 @@ const TYPE_TO_TAGS = {
   tourist_attraction: ['igphoto'],
   museum: ['igphoto'],
   art_gallery: ['igphoto', 'couple'],
-  park: ['adventure', 'free'],
+  park: ['adventure', 'free', 'kid', 'pet'], // 公園通常適合小孩跑跳消耗體力，也多半可以帶寵物散步
   natural_feature: ['adventure', 'free'],
-  hiking_area: ['adventure', 'free'],
+  hiking_area: ['adventure', 'free', 'pet'],
   national_park: ['adventure', 'free'],
+  playground: ['kid', 'free'],
   amusement_park: ['kid', 'friends'],
   zoo: ['kid'],
   aquarium: ['kid'],
   spa: ['couple'],
   night_club: ['friends'],
   bar: ['friends'],
-  cafe: ['couple', 'igphoto'],
+  cafe: ['couple', 'igphoto', 'foodie'],
   bakery: ['foodie'],
+  dessert_shop: ['foodie', 'couple'],
   restaurant: ['foodie'],
 };
 function guessTagsFromTypes(types) {
@@ -96,6 +99,15 @@ function normalizeSpot(raw, kind, region, apiKey) {
     ? `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=480&key=${apiKey}`
     : null;
 
+  // Google 最多附 5 則真實評論原文，簡化欄位後帶給前端做「評論優缺點摘要」（交給 Claude 分析，不是我們虛構的）
+  const reviewTexts = (raw.reviews || [])
+    .map((r) => ({
+      author: r?.authorAttribution?.displayName || '匿名旅客',
+      rating: typeof r.rating === 'number' ? r.rating : null,
+      text: r?.text?.text || r?.originalText?.text || '',
+    }))
+    .filter((r) => r.text);
+
   const isRestaurant = kind === 'restaurant';
   return {
     id: 'gp-' + (raw.id || `${kind}-${lat}-${lng}`),
@@ -110,6 +122,7 @@ function normalizeSpot(raw, kind, region, apiKey) {
     openHours: raw?.regularOpeningHours?.weekdayDescriptions || [],
     rating: typeof raw.rating === 'number' ? raw.rating : null,
     reviews: typeof raw.userRatingCount === 'number' ? raw.userRatingCount : null,
+    reviewTexts, // 真實評論原文（最多5則），給評論優缺點摘要功能使用
     price: priceLevelToText(raw.priceLevel),
     desc: desc ? String(desc).slice(0, 300) : '（Google Places 目前沒有提供這個地點的簡介文字）',
     picture: pictureUrl,

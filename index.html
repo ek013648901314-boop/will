@@ -274,7 +274,8 @@
   .itinerary-wrap{flex:1;display:flex;min-width:0;}
   .itinerary-left{width:400px;min-width:340px;border-right:1px solid var(--line);background:var(--card);overflow-y:auto;padding:18px;}
   .itinerary-right{flex:1;display:flex;flex-direction:column;min-width:0;}
-  .itinerary-right #map2{flex:1;position:relative;}
+  /* z-index:1 讓這個容器自成堆疊環境，避免 Leaflet 內部圖層（z-index 最高到 700）穿透蓋住上方的詳情彈窗（modal-backdrop 是 100） */
+  .itinerary-right #map2{flex:1;position:relative;z-index:1;}
   .itinerary-summary{background:var(--card);border-top:1px solid var(--line);padding:14px 18px;display:flex;gap:18px;flex-wrap:wrap;}
   .sum-stat{}
   .sum-stat .num{font-size:18px;font-weight:800;color:var(--sea-700);}
@@ -1060,6 +1061,13 @@ function openDetail(id){
         ${s.phone?`<div style="font-size:13px;margin-bottom:6px;">📞 ${s.phone}</div>`:''}
         ${s.openNow!=null?`<div style="font-size:13px;margin-bottom:8px;">${s.openNow?'🟢 目前營業中':'🔴 目前非營業時間'}</div>`:''}
         ${hoursHTML}
+      </div>
+      <div class="review-explorer" id="reviewSummaryBox" data-id="${s.id}">
+        <b style="font-size:13px;">評論怎麼說（優點 vs 缺點）</b>
+        <div style="font-size:11px;color:var(--ink-400);margin:4px 0 8px;">根據 Google 最多 5 則真實評論原文，由 AI 摘要重點（非評論真偽分析）</div>
+        ${(s.reviewTexts && s.reviewTexts.length)
+          ? `<div id="reviewSummaryContent" style="font-size:12.5px;color:var(--ink-400);">🔄 正在分析真實評論…</div>`
+          : `<div style="font-size:12px;color:var(--ink-400);">Google 目前沒有提供這個地點的評論原文，無法摘要</div>`}
       </div>`;
   } else {
     const reasonsHTML = s.auth.reasons.map(r=>`<li>${r.ok?'✅':'⚠️'} ${r.text}</li>`).join('');
@@ -1096,11 +1104,65 @@ function openDetail(id){
   document.getElementById('modalBackdrop').classList.add('open');
   document.getElementById('modalCloseBtn').onclick = closeDetail;
   document.querySelector('#modalBody .itin-toggle').onclick = ()=>{ toggleItinerary(id); openDetail(id); };
+
+  if(isReal && s.reviewTexts && s.reviewTexts.length) loadReviewSummary(s);
 }
 function closeDetail(){ document.getElementById('modalBackdrop').classList.remove('open'); }
 document.getElementById('modalBackdrop').addEventListener('click', e=>{
   if(e.target.id==='modalBackdrop') closeDetail();
 });
+
+// 把真實 Google 評論原文交給後端的 Claude 函式，摘要出優缺點條列（結果會快取在 spot 物件上，
+// 同一個地點重複打開詳情頁不會重複呼叫 API）。
+async function loadReviewSummary(s){
+  if(s._reviewSummary){
+    const box = document.getElementById('reviewSummaryContent');
+    if(box) box.innerHTML = renderReviewSummaryHTML(s._reviewSummary);
+    return;
+  }
+  try{
+    const res = await fetch('/.netlify/functions/review-summary', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ placeName:s.name, reviews:s.reviewTexts }),
+    });
+    if(res.status===501){
+      const box = document.getElementById('reviewSummaryContent');
+      if(box) box.innerHTML = `<div style="font-size:12px;color:var(--ink-400);">尚未設定 AI 金鑰，暫時無法產生評論摘要</div>`;
+      return;
+    }
+    if(!res.ok) throw new Error('狀態 '+res.status);
+    const data = await res.json();
+    s._reviewSummary = data;
+    // 使用者可能已經切換去看別的地點了，確認目前彈窗還是同一張卡才更新畫面，避免蓋錯內容
+    const boxWrap = document.getElementById('reviewSummaryBox');
+    if(boxWrap && boxWrap.dataset.id===s.id){
+      const box = document.getElementById('reviewSummaryContent');
+      if(box) box.innerHTML = renderReviewSummaryHTML(data);
+    }
+  }catch(err){
+    console.warn('評論優缺點摘要失敗：', err.message);
+    const boxWrap = document.getElementById('reviewSummaryBox');
+    if(boxWrap && boxWrap.dataset.id===s.id){
+      const box = document.getElementById('reviewSummaryContent');
+      if(box) box.innerHTML = `<div style="font-size:12px;color:var(--ink-400);">評論摘要暫時無法產生，稍後再試</div>`;
+    }
+  }
+}
+function renderReviewSummaryHTML(data){
+  const pros = data.pros||[], cons = data.cons||[];
+  if(!pros.length && !cons.length) return `<div style="font-size:12px;color:var(--ink-400);">評論中沒有找到明顯的優缺點</div>`;
+  return `<div class="review-cols">
+    <div class="review-col">
+      <div class="review-col-title good">👍 優點</div>
+      ${pros.length? pros.map(p=>`<div class="review-item">${p}</div>`).join('') : '<div class="review-empty">評論中沒有明顯優點</div>'}
+    </div>
+    <div class="review-col">
+      <div class="review-col-title bad">👎 缺點／注意事項</div>
+      ${cons.length? cons.map(c=>`<div class="review-item">${c}</div>`).join('') : '<div class="review-empty">評論中沒有明顯缺點</div>'}
+    </div>
+  </div>`;
+}
 
 /* =========================================================================
    7. MAPS (Leaflet + OpenStreetMap tiles)
@@ -1751,8 +1813,12 @@ function generateRouteVariants(parsed){
   if(!pool.length) pool = SPOTS.slice();
 
   const dep = nearestDeparture(parsed.regions);
-  const baseTarget = persona ? persona.maxStops : Math.max(2, Math.round(parsed.days<1?2:parsed.days*3));
+  // 完全沒有明確風格限制（單純想出去走走，沒特別要求）通常代表這趟是專程排時間出來的景點體驗之旅，行程可以排豐富一點
+  const noConstraint = !explicitTags.length && !persona;
+  const baseTarget = (persona ? persona.maxStops : Math.max(2, Math.round(parsed.days<1?2:parsed.days*3))) + (noConstraint?1:0);
   const personaBoost = s => (persona && persona.forceTag && s.tags.includes(persona.forceTag)) ? 1.4 : 1;
+  const isFoodie = explicitTags.includes('foodie');
+  const isKid = explicitTags.includes('kid');
 
   function buildVariant(label, icon, candidatePool, scoreFn, count){
     let source = candidatePool.slice().sort((a,b)=>scoreFn(b)-scoreFn(a));
@@ -1770,18 +1836,21 @@ function generateRouteVariants(parsed){
 
   // 評分高、離出發地近優先，且刻意降低「戶外探險」型地點的權重（悠閒訴求），並套用旅遊人格加權
   const relaxScore  = s => (s.rating*(s.auth.score/100) - haversine(dep,s)/300) * (s.tags.includes('adventure')?0.8:1) * personaBoost(s);
-  const scenicScore = s => s.rating * ((s.tags.includes('igphoto')||s.tags.includes('adventure'))?1.25:1) * personaBoost(s);
-  const foodieScore = s => s.rating * (s.tags.includes('foodie')?1.3:1) * personaBoost(s);
+  // 帶小孩時，景點加重「戶外探險」（通常代表能跑跳消耗體力的地方，如公園/步道）權重，符合親子出遊需求
+  const scenicScore = s => s.rating * ((s.tags.includes('igphoto')||s.tags.includes('adventure'))?1.25:1) * (isKid && s.tags.includes('adventure')?1.3:1) * personaBoost(s);
+  // 使用者明講自己是吃貨時，美食類地點權重加重更多，讓「美食＋景點」方案能塞進更多間餐廳／甜點／下午茶
+  const foodieScore = s => s.rating * (s.tags.includes('foodie')?(isFoodie?1.6:1.3):1) * personaBoost(s);
 
   // 三個方案各自從不同子池出發（悠閒＝不限類型／景色優先＝以景點為主／美食＋景點＝以餐廳為主，不足再從共用池補齊）
   const relaxPool  = pool;
   const scenicPool = pool.filter(s=>s.type==='attraction');
   const foodiePool = pool.filter(s=>s.type==='restaurant');
+  const foodieTarget = isFoodie ? baseTarget+1 : baseTarget; // 吃貨明確要求時，美食方案多排一站
 
   return [
     buildVariant('悠閒路線','🟢', relaxPool,  relaxScore,  Math.max(2, baseTarget-1)),
     buildVariant('景色優先','🔵', scenicPool, scenicScore, baseTarget),
-    buildVariant('美食＋景點','🟠', foodiePool, foodieScore, baseTarget),
+    buildVariant('美食＋景點','🟠', foodiePool, foodieScore, foodieTarget),
   ];
 }
 
