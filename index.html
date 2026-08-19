@@ -329,6 +329,8 @@
   .chat-input-row{display:flex;gap:8px;padding:14px 16px;border-top:1px solid var(--line);background:var(--card);}
   .chat-input-row input{flex:1;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font-size:14px;outline:none;}
   .chat-input-row button{background:var(--sea-700);color:#fff;border:none;border-radius:11px;padding:0 18px;font-weight:700;}
+  .chat-input-row button:disabled{opacity:.55;cursor:default;}
+  .chat-input-row input:disabled{opacity:.6;}
 
   ::-webkit-scrollbar{width:9px;height:9px;}
   ::-webkit-scrollbar-thumb{background:#c7dade;border-radius:6px;}
@@ -711,6 +713,7 @@ const state = {
   persona:null,      // 旅遊人格 key，見 PERSONAS
   pendingAIRequest:null, // AI 助手問完「幾點出發」前，暫存已解析出的地區/標籤/人數等，等使用者回覆時間後才繼續
   chatHistory:[],   // 傳給真實 Claude API 的對話上下文（{role,content}[]）；後端沒設定金鑰時不會用到
+  aiBusy:false,     // 是否有一則 AI 訊息還在等後端回覆，避免重疊送出造成對話上下文錯亂
 };
 
 /* =========================================================================
@@ -1628,8 +1631,20 @@ function askDepartureTime(parsed){
 // 後端還沒設定 ANTHROPIC_API_KEY（或呼叫失敗、離線）時，安靜地退回原本的規則式關鍵字解析，
 // 讓網站在金鑰設定好之前也不會壞掉。
 function handleAIQuery(text){
+  // 上一則訊息還在等後端回覆時，先不處理新訊息——避免兩個請求同時打出去，
+  // 第二個請求會帶著還沒更新到「第一則回覆」的舊 chatHistory，讓 Claude 失去剛剛的對話上下文。
+  if(state.aiBusy) return;
+  state.aiBusy = true;
+  setChatInputEnabled(false);
   addChatMsg('user', text.replace(/</g,'&lt;'));
   callAIChatBackend(text);
+}
+
+function setChatInputEnabled(enabled){
+  const sendBtn = document.getElementById('chatSend');
+  const input = document.getElementById('chatInput');
+  if(sendBtn){ sendBtn.disabled = !enabled; sendBtn.textContent = enabled ? '送出' : '思考中…'; }
+  if(input) input.disabled = !enabled;
 }
 
 async function callAIChatBackend(text){
@@ -1664,6 +1679,10 @@ async function callAIChatBackend(text){
   }catch(err){
     console.warn('真實 AI 後端呼叫失敗，改用本機規則式解析：', err.message);
     handleAIQueryLocalFallback(text);
+  }finally{
+    state.aiBusy = false;
+    setChatInputEnabled(true);
+    document.getElementById('chatInput').focus();
   }
 }
 
