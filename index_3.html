@@ -508,6 +508,14 @@
             <button id="peoplePlus2">+</button>
           </div>
 
+          <h3>天數</h3>
+          <div class="stepper">
+            <button id="daysMinus">−</button>
+            <span id="daysVal">1</span>
+            <button id="daysPlus">+</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--ink-400);margin-top:4px;">每天最晚安排到約 21:30（勾選宵夜則到 23:30），排不完會自動多排一天，不會硬塞到半夜</div>
+
           <h3>出發時間</h3>
           <select class="field" id="startTimeSelect"></select>
           <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-600);margin-top:8px;">
@@ -690,9 +698,17 @@ const SPOTS = [
 const DEPARTURES = [
   {name:'台北車站', lat:25.0478, lng:121.5170},
   {name:'桃園國際機場', lat:25.0777, lng:121.2328},
+  {name:'新竹車站', lat:24.8014, lng:120.9714},
+  {name:'苗栗車站', lat:24.5602, lng:120.8214},
   {name:'台中車站', lat:24.1367, lng:120.6855},
+  {name:'彰化車站', lat:24.0808, lng:120.5415},
+  {name:'南投（南投市）', lat:23.9157, lng:120.6869},
+  {name:'雲林（斗六車站）', lat:23.7092, lng:120.5432},
+  {name:'嘉義車站', lat:23.4801, lng:120.4491},
   {name:'台南車站', lat:22.9973, lng:120.2130},
   {name:'高雄車站', lat:22.6395, lng:120.3020},
+  {name:'屏東車站', lat:22.6521, lng:120.4881},
+  {name:'宜蘭車站', lat:24.7570, lng:121.7530},
   {name:'花蓮車站', lat:23.9930, lng:121.6010},
   {name:'台東車站', lat:22.7553, lng:121.1450},
   {name:'澎湖馬公機場', lat:23.5686, lng:119.6285},
@@ -716,6 +732,7 @@ const state = {
   pendingAIRequest:null, // AI 助手問完「幾點出發」前，暫存已解析出的地區/標籤/人數等，等使用者回覆時間後才繼續
   chatHistory:[],   // 傳給真實 Claude API 的對話上下文（{role,content}[]）；後端沒設定金鑰時不會用到
   aiBusy:false,     // 是否有一則 AI 訊息還在等後端回覆，避免重疊送出造成對話上下文錯亂
+  days:1,           // 行程天數（手動規劃預設 1 天；AI 規劃選方案後會依對話內容自動帶入）
   realSpots:[],               // 已抓到的 Google Places 真實地點（累積各地區抓過的結果）
   realSpotsLoadedRegions:new Set(), // 已經成功嘗試抓取過（含金鑰未設定/失敗）的地區，避免每次篩選都重打 API
   realSpotsLoading:new Set(), // 正在抓取中的地區，用來顯示載入中提示
@@ -799,12 +816,18 @@ function initSidebar(){
   document.getElementById('peoplePlus').onclick=()=>{ setPeople(state.people+1); };
   document.getElementById('peopleMinus2').onclick=()=>{ setPeople(state.people-1); };
   document.getElementById('peoplePlus2').onclick=()=>{ setPeople(state.people+1); };
+  document.getElementById('daysMinus').onclick=()=>{ setDays(state.days-1); };
+  document.getElementById('daysPlus').onclick=()=>{ setDays(state.days+1); };
 }
 function setPeople(v){
   state.people = Math.max(1, Math.min(30, v));
   document.getElementById('peopleVal').textContent = state.people;
   document.getElementById('peopleVal2').textContent = state.people;
   renderStopList();
+}
+function setDays(v){
+  state.days = Math.max(1, Math.min(14, v));
+  document.getElementById('daysVal').textContent = state.days;
 }
 
 function refreshFilters(){
@@ -1370,16 +1393,18 @@ function findNearestRestaurant(pos, mealType, usedIds, preferredPool){
 }
 // 把已排序的 order（來自 planRoute，可能已被 generateRoute 用真實道路資料覆蓋過距離）轉換成含時鐘的一日時間表，
 // 在合適的時間點自動安插用餐；使用者原本就加入行程的餐廳會被優先拿來對應時段，而不是被忽略或重複安排。
-function buildTimetable(order, dep, startMinutes, includeLateNight){
+// 單一天的時間表建構（原本的 buildTimetable，改參數化成可重複用在多天行程的每一天）：
+// startPoint 是這一天的出發點（第一天是真正的出發地，第二天以後是「前一天最後一站附近」，模擬回住宿過夜再出發）；
+// usedIds 從外部傳入並直接修改，讓「這間餐廳已經排過」的紀錄可以跨天共用，不會兩天都排到同一間餐廳。
+function buildSingleDayTimetable(dayLegs, startPoint, startMinutes, includeLateNight, usedIds){
   const windows = MEAL_WINDOWS.filter(w=>!w.optional || includeLateNight);
   const pending = windows.slice();
-  const attractionLegs = order.filter(l=>l.spot.type==='attraction');
-  const userRestaurants = order.filter(l=>l.spot.type==='restaurant').map(l=>l.spot);
+  const attractionLegs = dayLegs.filter(l=>l.spot.type==='attraction');
+  const userRestaurants = dayLegs.filter(l=>l.spot.type==='restaurant').map(l=>l.spot);
 
   let clock = startMinutes;
-  let pos = {lat:dep.lat, lng:dep.lng, region:null};
-  const usedIds = new Set();
-  const timeline = [{kind:'depart', time:clock, name:dep.name}];
+  let pos = {lat:startPoint.lat, lng:startPoint.lng, region:null};
+  const timeline = [{kind:'depart', time:clock, name:startPoint.name}];
   let idx = 0;
 
   // 如果行程一開始就要搭船／搭機跨島（例如整天都在小琉球），先把這段跨島移動處理掉，
@@ -1444,6 +1469,72 @@ function buildTimetable(order, dep, startMinutes, includeLateNight){
   }
   return {timeline, endClock:clock};
 }
+
+// 一天最晚安排到的時間（含最後一個景點/餐廳結束時間）——這是「人性化步調」的核心限制：
+// 排不下的地點會自動移到下一天，不會像以前那樣把整趟行程硬塞成一天、排到凌晨還在跑景點。
+const DAY_END_CAP = 21*60+30;       // 21:30，一般情況
+const DAY_END_CAP_LATE = 23*60+30;  // 23:30，有勾選宵夜時可以晚一點
+
+// 把整趟行程的地點依序（planRoute 排好的最近鄰順序）切成好幾天，每天粗估時間不超過當天上限。
+// 這只是「切天」用的粗估模擬（沒有精確安插用餐時段），真正顯示的時間表由 buildSingleDayTimetable 各自重新計算，
+// 所以粗估跟實際顯示時間會有些微差距，但足夠拿來決定「這個景點該排進第幾天」。
+function splitLegsIntoDays(order, dep, startMinutes, includeLateNight){
+  const cap = includeLateNight ? DAY_END_CAP_LATE : DAY_END_CAP;
+  const maxDays = 14; // 安全上限：避免地點分散到誇張程度時無限增加天數
+  const dayChunks = [];
+  let remaining = order.slice();
+  let dayStart = {lat:dep.lat, lng:dep.lng};
+
+  while(remaining.length && dayChunks.length < maxDays){
+    const chunk = [];
+    let simClock = startMinutes;
+    let simPos = dayStart;
+    while(remaining.length){
+      const next = remaining[0];
+      const travel = travelEstimateMinutes(simPos, next.spot);
+      const stay = next.spot.dur || (next.spot.type==='restaurant'?60:90);
+      const departTime = simClock + travel + stay;
+      if(chunk.length && departTime > cap) break; // 這天已經滿了，留給下一天；但至少保底排一個，避免卡死
+      chunk.push(next);
+      remaining.shift();
+      simClock = departTime;
+      simPos = next.spot;
+    }
+    dayChunks.push(chunk);
+    const last = chunk[chunk.length-1].spot;
+    dayStart = {lat:last.lat, lng:last.lng};
+  }
+  return dayChunks;
+}
+
+// 把整趟行程排成「每天各自的時間表」，並在最後一天結尾加上回程到出發地的路程時間
+// （原本的版本完全沒有計算回程，行程會停在最後一個景點就結束，好像使用者要睡在那裡一樣）。
+function buildMultiDayItinerary(order, dep, startMinutes, includeLateNight){
+  const dayChunks = splitLegsIntoDays(order, dep, startMinutes, includeLateNight);
+  const usedIds = new Set(); // 跨天共用，避免不同天被重複推薦同一間餐廳
+  const days = [];
+  let dayStart = dep;
+
+  dayChunks.forEach((chunk, i)=>{
+    const tt = buildSingleDayTimetable(chunk, dayStart, startMinutes, includeLateNight, usedIds);
+    days.push({dayIndex:i+1, timeline:tt.timeline, endClock:tt.endClock});
+    const last = chunk[chunk.length-1].spot;
+    dayStart = {lat:last.lat, lng:last.lng, name:`${last.name} 附近（住宿）`};
+  });
+
+  // 最後一天結尾加上回程：從最後一站直接算回出發地的粗估交通時間
+  if(days.length){
+    const lastChunk = dayChunks[dayChunks.length-1];
+    const lastSpot = lastChunk[lastChunk.length-1].spot;
+    const lastDay = days[days.length-1];
+    const returnMin = travelEstimateMinutes(lastSpot, dep);
+    lastDay.timeline.push({kind:'return', minutes:returnMin, destName:dep.name, ferry:crossesIslandBoundary(lastSpot,dep)});
+    lastDay.endClock += returnMin;
+  }
+
+  return {days, totalDays:days.length};
+}
+
 function renderTimetable(result){
   const rows = result.timeline.map(ev=>{
     if(ev.kind==='depart') return `<div class="tt-row tt-depart"><span class="tt-time">${minutesToClock(ev.time)}</span><span class="tt-body">🚩 從 <b>${ev.name}</b> 出發</span></div>`;
@@ -1454,9 +1545,23 @@ function renderTimetable(result){
     if(ev.kind==='visit') return `<div class="tt-row tt-visit"><span class="tt-time">${minutesToClock(ev.arrive)}–${minutesToClock(ev.depart)}</span><span class="tt-body">📍 <b>${ev.spot.name}</b>　<span class="tt-sub">建議停留 ${ev.spot.dur||90} 分鐘 · ${ev.spot.region}</span></span></div>`;
     if(ev.kind==='meal') return `<div class="tt-row tt-meal"><span class="tt-time">${minutesToClock(ev.arrive)}–${minutesToClock(ev.depart)}</span><span class="tt-body">${ev.window.icon} <b>${ev.window.label}：${ev.spot.name}</b>　<span class="tt-sub">建議停留 ${ev.spot.dur||60} 分鐘</span></span></div>`;
     if(ev.kind==='warning') return `<div class="tt-row tt-warning"><span class="tt-time"></span><span class="tt-body">⚠️ ${ev.window.icon} ${ev.text}</span></div>`;
+    if(ev.kind==='return') return ev.ferry
+      ? `<div class="tt-row tt-travel"><span class="tt-time"></span><span class="tt-body">⛴️ 返程需搭乘跨島船班／航班，約 ${Math.round(ev.minutes)} 分鐘</span></div>`
+      : `<div class="tt-row tt-travel"><span class="tt-time"></span><span class="tt-body">🚗 返程約 ${Math.round(ev.minutes)} 分鐘車程，回到 ${ev.destName}</span></div>`;
     return '';
   }).join('');
-  return `<div class="timetable">${rows}<div class="tt-row tt-end"><span class="tt-time">${minutesToClock(result.endClock)}</span><span class="tt-body">🏁 行程大約結束，準備賦歸或返回住宿</span></div></div>`;
+  const lastEv = result.timeline[result.timeline.length-1];
+  const endLabel = (lastEv && lastEv.kind==='return')
+    ? `🏁 預計返回 ${lastEv.destName}`
+    : `🏁 今天行程大約結束，準備返回住宿`;
+  return `<div class="timetable">${rows}<div class="tt-row tt-end"><span class="tt-time">${minutesToClock(result.endClock)}</span><span class="tt-body">${endLabel}</span></div></div>`;
+}
+
+function renderMultiDayTimetable(multiDay){
+  return multiDay.days.map(d=>{
+    const label = multiDay.days.length>1 ? `<h4 style="margin:16px 0 6px;font-size:13.5px;color:var(--sea-700);border-top:1px dashed var(--line);padding-top:12px;">📅 第 ${d.dayIndex} 天</h4>` : '';
+    return label + renderTimetable(d);
+  }).join('');
 }
 
 // 呼叫開源路網服務 OSRM（router.project-osrm.org 公開示範主機，免金鑰）取得「貼著實際道路」的路線幾何、
@@ -1586,16 +1691,16 @@ async function generateRoute(){
     map2.fitBounds(lastRouteBounds, {padding:[40,40]});
   }
 
-  // Result：改成含時鐘時間的完整一日時間表，在合適時段自動安插用餐
+  // Result：改成含時鐘時間的多天時間表，每天最晚安排到 21:30（宵夜則 23:30），在合適時段自動安插用餐，
+  // 排不完會自動多排一天，不會硬塞成一個從早排到凌晨的超長「一天」
   const startMinutes = Number(document.getElementById('startTimeSelect').value);
   const includeLateNight = document.getElementById('enableLateNight').checked;
-  const tt = buildTimetable(order, dep, startMinutes, includeLateNight);
+  const multiDay = buildMultiDayItinerary(order, dep, startMinutes, includeLateNight);
 
   const resultEl = document.getElementById('routeResult');
   let html = `<h3 style="margin-bottom:4px;">建議時間表</h3>`;
-  const spanHours = (tt.endClock - startMinutes)/60;
-  if(spanHours > 15){
-    html += `<div class="group-warn" style="margin-bottom:10px;">⚠️ 這個行程排下來大約要 ${spanHours.toFixed(1)} 小時，單日恐怕太趕，建議拆成兩天，或移除部分景點。</div>`;
+  if(multiDay.totalDays > state.days){
+    html += `<div class="group-warn" style="margin-bottom:10px;">⚠️ 你選的地點以目前步調（每天最晚到 21:30）需要 ${multiDay.totalDays} 天才排得完，比原本設定的 ${state.days} 天多——已自動延長天數，避免把行程硬塞到深夜。想維持原本天數的話，建議移除幾個地點。</div>`;
   }
 
   // Google Maps 路線導航連結：放在時間表「上方」而不是最下面——手機上時間表一長，按鈕放最後很容易被捲動捲過去、完全看不到
@@ -1608,7 +1713,7 @@ async function generateRoute(){
     }
   }
 
-  html += renderTimetable(tt);
+  html += renderMultiDayTimetable(multiDay);
   resultEl.innerHTML = html;
   if(gmapsUrl){
     document.getElementById('openInGoogleMapsBtn').onclick = ()=> window.open(gmapsUrl, '_blank', 'noopener');
@@ -1617,12 +1722,11 @@ async function generateRoute(){
   resultEl.scrollIntoView({behavior:'smooth', block:'start'});
 
   // Summary
-  const days = Math.max(1, Math.ceil(spanHours/14)); // 以「一天大約可安排 14 小時（含用餐）」概算建議天數
   document.getElementById('itinSummary').style.display='flex';
   document.getElementById('sumStops').textContent = order.length;
   document.getElementById('sumDist').textContent = totalDist.toFixed(0)+' km';
   document.getElementById('sumTime').textContent = totalTime.toFixed(1)+' 小時';
-  document.getElementById('sumDays').textContent = days+' 天建議';
+  document.getElementById('sumDays').textContent = multiDay.totalDays+' 天';
 
   genBtn.textContent = originalBtnText;
   genBtn.disabled = false;
@@ -1757,7 +1861,12 @@ function parseAIQuery(text){
   const peopleMatch = t.match(/(\d+)\s*人/);
   if(peopleMatch) people = Number(peopleMatch[1]);
 
-  return {regions, tags, days, people};
+  // 找「從／在 XX 出發」這種講法，抓出出發地文字（找不到就是 null，呼叫端會退回用地區猜出發點）
+  let departure = null;
+  const depMatch = t.match(/(?:從|由|在)([一-龥]{2,6}?)(?:出發|出來|出門)/);
+  if(depMatch) departure = depMatch[1];
+
+  return {regions, tags, days, people, departure};
 }
 
 // 嘗試從文字裡抓出「幾點出發」，支援「早上/上午/中午/下午/晚上/傍晚 X點(半)?」與「H:MM」兩種常見講法
@@ -1783,6 +1892,19 @@ function parseStartTime(text){
 }
 
 // 依需求所在地區，找出最接近的「出發地」預設值（示範用簡化邏輯）
+// 從使用者話裡明講的出發地文字（例如「彰化」「台北車站」），去 DEPARTURES 清單裡找最接近的選項；
+// 找不到明確符合的地名就回傳 null，呼叫端會退回用地區地理中心點去猜（nearestDeparture）。
+function findDepartureByText(text){
+  if(!text) return null;
+  const clean = String(text).trim();
+  if(!clean) return null;
+  const stripSuffix = s => s.replace(/[（(].*?[）)]/g,'').replace(/(車站|機場|渡輪口)$/,'');
+  for(const d of DEPARTURES){
+    const short = stripSuffix(d.name);
+    if(d.name.includes(clean) || clean.includes(short) || short.includes(clean)) return d;
+  }
+  return null;
+}
 function nearestDeparture(regions){
   if(!regions || !regions.length) return DEPARTURES[0];
   const regionSpots = SPOTS.filter(s=>regions.includes(s.region));
@@ -1812,7 +1934,7 @@ function generateRouteVariants(parsed){
   }
   if(!pool.length) pool = SPOTS.slice();
 
-  const dep = nearestDeparture(parsed.regions);
+  const dep = findDepartureByText(parsed.departure) || nearestDeparture(parsed.regions);
   // 完全沒有明確風格限制（單純想出去走走，沒特別要求）通常代表這趟是專程排時間出來的景點體驗之旅，行程可以排豐富一點
   const noConstraint = !explicitTags.length && !persona;
   const baseTarget = (persona ? persona.maxStops : Math.max(2, Math.round(parsed.days<1?2:parsed.days*3))) + (noConstraint?1:0);
@@ -1864,15 +1986,19 @@ function addChatMsg(role, html){
   return div;
 }
 
-// 把 buildTimetable 的結果濃縮成聊天卡片裡放得下的單行摘要（只留出發／用餐／景點，略過移動與空檔細節）
-function compactTimetableSummary(tt){
-  return tt.timeline.map(ev=>{
-    if(ev.kind==='depart') return `🚩${minutesToClock(ev.time)}出發`;
-    if(ev.kind==='visit')  return `📍${minutesToClock(ev.arrive)} ${ev.spot.name}`;
-    if(ev.kind==='meal')   return `${ev.window.icon}${minutesToClock(ev.arrive)} ${ev.spot.name}`;
-    if(ev.kind==='warning')return `⚠️ ${ev.window.label}無資料`;
-    return null;
-  }).filter(Boolean).join(' → ');
+// 把多天行程濃縮成聊天卡片裡放得下的摘要（只留出發／用餐／景點，略過移動與空檔細節；多天用「｜第N天」分隔）
+function compactTimetableSummary(multiDay){
+  return multiDay.days.map(d=>{
+    const dayPrefix = multiDay.days.length>1 ? `第${d.dayIndex}天：` : '';
+    const line = d.timeline.map(ev=>{
+      if(ev.kind==='depart') return `🚩${minutesToClock(ev.time)}出發`;
+      if(ev.kind==='visit')  return `📍${minutesToClock(ev.arrive)} ${ev.spot.name}`;
+      if(ev.kind==='meal')   return `${ev.window.icon}${minutesToClock(ev.arrive)} ${ev.spot.name}`;
+      if(ev.kind==='warning')return `⚠️ ${ev.window.label}無資料`;
+      return null;
+    }).filter(Boolean).join(' → ');
+    return dayPrefix + line;
+  }).join('　｜　');
 }
 
 function askDepartureTime(parsed){
@@ -1936,6 +2062,7 @@ async function callAIChatBackend(text){
         days: data.days||1,
         people: data.people||2,
         startMinutes: data.startMinutes,
+        departure: data.departure||null,
       });
     }
   }catch(err){
@@ -1985,7 +2112,7 @@ function presentVariants(parsed){
   let html = `理解成：<b>${regionTxt}</b>、風格偏好<b>${tagTxt}</b>、行程長度約 <b>${dayTxt}</b>、同行 <b>${parsed.people} 人</b>、<b>${minutesToClock(parsed.startMinutes)} 出發</b>。<br>我沒有只給你一條路，也不會只丟地點名稱——幫你把早餐到晚餐的時段都排好了，選一個喜歡的方案：`;
   html += `<div class="itin-mini">`;
   const seenSignatures = {}; // 偵測「不同方案挑出完全一樣的地點」，如實告知而不是假裝三種玩法都不同
-  const variantTimetables = variants.map(v => buildTimetable(v.order, v.dep, parsed.startMinutes, false));
+  const variantTimetables = variants.map(v => buildMultiDayItinerary(v.order, v.dep, parsed.startMinutes, false));
   variants.forEach((v,vi)=>{
     const summary = v.ids.length ? compactTimetableSummary(variantTimetables[vi]) : '（此方案暫無符合地點，可調整需求再試）';
     const sig = v.ids.slice().sort().join(',');
@@ -2008,6 +2135,7 @@ function presentVariants(parsed){
       const v = variants[Number(btn.dataset.vi)];
       state.itinerary = v.ids.slice();
       setPeople(parsed.people || state.people);
+      setDays(Math.max(1, Math.ceil(parsed.days || 1)));
       const depIdx = DEPARTURES.findIndex(d=>d.name===v.dep.name);
       document.getElementById('departureSelect').value = depIdx>=0 ? depIdx : 0;
       document.getElementById('startTimeSelect').value = nearestStartTimeOption(parsed.startMinutes);

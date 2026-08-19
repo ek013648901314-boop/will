@@ -235,17 +235,25 @@ exports.handler = async (event) => {
     const cities = REGION_TO_CITIES[region];
     const kinds = type === 'attraction' ? ['attraction'] : type === 'restaurant' ? ['restaurant'] : ['attraction', 'restaurant'];
 
-    // 每個縣市 x 每種類型組一個查詢字串，平行呼叫 Google Places（Promise.all），加快整體回應速度
+    // 每個縣市 x 每種類型，除了原本廣泛的「景點／美食」查詢，額外加一組偏「在地／私房」的查詢字樣，
+    // 讓結果不會只有 Google 排名最前面那幾個人人都知道的網紅大地標，混進一些比較在地、沒那麼主流的選項。
+    const QUERY_VARIANTS = {
+      attraction: (city) => [`${city} 景點`, `${city} 私房景點 秘境`],
+      restaurant: (city) => [`${city} 美食 餐廳`, `${city} 在地小吃 巷弄美食 在地人推薦`],
+    };
+
+    // 每個縣市 x 每種類型 x 每個查詢變體，平行呼叫 Google Places（Promise.all），加快整體回應速度
     const tasks = [];
     for (const city of cities) {
       for (const kind of kinds) {
-        const textQuery = kind === 'attraction' ? `${city} 景點` : `${city} 美食 餐廳`;
-        tasks.push(
-          searchOneQuery(textQuery, apiKey).then((r) => ({
-            spots: r.places.map((raw) => normalizeSpot(raw, kind, region, apiKey)).filter(Boolean),
-            error: r.error,
-          }))
-        );
+        for (const textQuery of QUERY_VARIANTS[kind](city)) {
+          tasks.push(
+            searchOneQuery(textQuery, apiKey).then((r) => ({
+              spots: r.places.map((raw) => normalizeSpot(raw, kind, region, apiKey)).filter(Boolean),
+              error: r.error,
+            }))
+          );
+        }
       }
     }
     const taskResults = await Promise.all(tasks);

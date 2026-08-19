@@ -49,6 +49,10 @@ ${REGION_TABLE_TEXT}
 - 提到長輩／爸媽同行 → 加 elder，行程步調不要太趕
 - 這些推論出來的標籤只是「風格偏好」，不是強制篩選條件，所以合理推論、不用過度保守
 
+如果使用者有提到「從哪裡出發」（例如「從彰化出發」「台北出發」），一定要抓出那個地名放進 departure 欄位——這點很重要，
+系統排路線時需要用這個當起點，沒抓到的話系統會亂猜出發地，導致排出來的行程從不相干的城市開始、也沒算回程時間。
+如果沒提到出發地，departure 填 null（不要瞎猜）。
+
 如果使用者還沒說出發時間，trip_ready 設為 false，並在 reply 裡自然地追問幾點出發（可以順便建議幾個選項，例如上午9點、中午12點）。
 如果資訊足夠（至少有出發時間），trip_ready 設為 true，reply 簡短說明你理解成什麼、即將提供路線方案。
 一定要呼叫 respond_to_traveler 這個工具來回覆，不要用純文字回答。`;
@@ -65,6 +69,7 @@ const TOOL_DEF = {
       tags: { type: 'array', items: { type: 'string', enum: TAGS }, description: '使用者提到的風格標籤，沒提到就是空陣列。' },
       days: { type: 'number', description: '天數，0.5 代表半日遊，預設 1。' },
       people: { type: 'number', description: '同行人數，預設 2。' },
+      departure: { type: ['string', 'null'], description: '使用者明講的出發地地名（例如「彰化」「台北車站」），沒提到就是 null，不要自己瞎猜。' },
       start_minutes: {
         type: ['number', 'null'],
         description: '出發時間，用「當天午夜過後的分鐘數」表示，例如 09:30 = 570。還不知道就填 null。',
@@ -154,6 +159,7 @@ exports.handler = async (event) => {
         days: typeof toolUse.input.days === 'number' ? toolUse.input.days : 1,
         people: typeof toolUse.input.people === 'number' ? toolUse.input.people : 2,
         startMinutes: typeof toolUse.input.start_minutes === 'number' ? toolUse.input.start_minutes : null,
+        departure: toolUse.input.departure || null,
       }),
     };
   } catch (err) {
