@@ -1,20 +1,26 @@
 // netlify/functions/directions.js
 //
-// 伺服器端函式：向 Google Directions API 查詢「真實道路路線」，取代原本前端直接呼叫的
-// 公開 OSRM 示範伺服器（router.project-osrm.org，僅供輕量測試，非正式產品應依賴的服務）。
-// 跟 places-search.js 共用同一把 GOOGLE_PLACES_API_KEY（該金鑰已同時限制允許 Directions API）。
+// 伺服器端函式：向 Google Routes API（新版，取代舊版 Directions API）查詢「真實道路路線」，
+// 取代原本前端直接呼叫的公開 OSRM 示範伺服器（router.project-osrm.org，僅供輕量測試用）。
+// 跟 places-search.js 共用同一把 GOOGLE_PLACES_API_KEY（該金鑰需額外啟用「Routes API」，
+// 光啟用舊版「Directions API」不夠——Google 已經不開放新專案使用舊版 API 了）。
 //
 // 需要的環境變數（在 Netlify 後台設定，不要寫死在程式碼裡）：
-//   GOOGLE_PLACES_API_KEY = 你的 Google Cloud API 金鑰（需啟用 Directions API）
+//   GOOGLE_PLACES_API_KEY = 你的 Google Cloud API 金鑰（需啟用 Routes API）
 //
 // 用法（前端 fetch）：
 //   GET /.netlify/functions/directions?points=25.0478,121.5170;25.0330,121.5654;25.0273,121.5760
 //   points 是分號分隔的「lat,lng」清單，第一個是起點、最後一個是終點，中間是途經點
 
-const DIRECTIONS_URL = 'https://maps.googleapis.com/maps/api/directions/json';
+const ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+const FIELD_MASK = [
+  'routes.polyline.encodedPolyline',
+  'routes.legs.distanceMeters',
+  'routes.legs.duration',
+].join(',');
 
 // Google 的路線幾何是「Encoded Polyline」格式（一段緊湊編碼字串），要解碼成 [lat,lng] 陣列才能畫在 Leaflet 地圖上。
-// 這是 Google 官方公開的標準演算法（跟 OSRM 回傳的 GeoJSON 座標陣列不同格式，所以需要這段轉換）。
+// 這是 Google 公開的標準演算法（Routes API 跟舊版 Directions API 用同一種編碼格式）。
 function decodePolyline(encoded) {
   let index = 0, lat = 0, lng = 0;
   const coordinates = [];
@@ -38,6 +44,17 @@ function decodePolyline(encoded) {
     coordinates.push([lat / 1e5, lng / 1e5]);
   }
   return coordinates;
+}
+
+function toLatLngWaypoint(pointStr) {
+  const [lat, lng] = pointStr.split(',').map(Number);
+  return { location: { latLng: { latitude: lat, longitude: lng } } };
+}
+
+// Routes API 回傳的 duration 是像 "1234s" 這種字串（秒數加 s），轉成數字秒數
+function parseDurationSeconds(durationStr) {
+  if (!durationStr) return 0;
+  return parseFloat(String(durationStr).replace('s', '')) || 0;
 }
 
 exports.handler = async (event) => {
@@ -66,37 +83,45 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: '至少需要兩個點（起點與終點）' }) };
   }
 
-  const origin = points[0];
-  const destination = points[points.length - 1];
-  const waypoints = points.slice(1, -1);
-
-  const params = new URLSearchParams({
-    origin,
-    destination,
-    mode: 'driving',
-    language: 'zh-TW',
-    key: apiKey,
-  });
-  if (waypoints.length) params.set('waypoints', waypoints.join('|'));
+  const origin = toLatLngWaypoint(points[0]);
+  const destination = toLatLngWaypoint(points[points.length - 1]);
+  const intermediates = points.slice(1, -1).map(toLatLngWaypoint);
 
   try {
-    const res = await fetch(`${DIRECTIONS_URL}?${params.toString()}`);
+    const res = await fetch(ROUTES_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': FIELD_MASK,
+      },
+      body: JSON.stringify({
+        origin,
+        destination,
+        intermediates,
+        travelMode: 'DRIVE',
+        polylineQuality: 'OVERVIEW',
+        languageCode: 'zh-TW',
+        units: 'METRIC',
+      }),
+    });
+
     if (!res.ok) {
       const errText = await res.text();
-      return { statusCode: 502, headers, body: JSON.stringify({ error: `Google Directions HTTP ${res.status}：${errText.slice(0, 300)}` }) };
+      return { statusCode: 502, headers, body: JSON.stringify({ error: `Google Routes API HTTP ${res.status}：${errText.slice(0, 300)}` }) };
     }
     const data = await res.json();
-    if (data.status !== 'OK' || !data.routes || !data.routes.length) {
-      return { statusCode: 502, headers, body: JSON.stringify({ error: `Google Directions 無可用路線（status: ${data.status}）：${data.error_message || ''}` }) };
+    if (!data.routes || !data.routes.length) {
+      return { statusCode: 502, headers, body: JSON.stringify({ error: 'Google Routes API 沒有回傳可用路線' }) };
     }
 
     const route = data.routes[0];
-    const latlngs = decodePolyline(route.overview_polyline.points);
-    const legDistKm = route.legs.map((l) => l.distance.value / 1000);
-    const legHours = route.legs.map((l) => l.duration.value / 3600);
+    const latlngs = decodePolyline(route.polyline.encodedPolyline);
+    const legDistKm = route.legs.map((l) => (l.distanceMeters || 0) / 1000);
+    const legHours = route.legs.map((l) => parseDurationSeconds(l.duration) / 3600);
 
     return { statusCode: 200, headers, body: JSON.stringify({ latlngs, legDistKm, legHours }) };
   } catch (err) {
-    return { statusCode: 502, headers, body: JSON.stringify({ error: 'Google Directions API 呼叫失敗：' + err.message }) };
+    return { statusCode: 502, headers, body: JSON.stringify({ error: 'Google Routes API 呼叫失敗：' + err.message }) };
   }
 };
