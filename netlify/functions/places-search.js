@@ -100,11 +100,12 @@ async function searchOneQuery(textQuery, apiKey) {
   });
   if (!res.ok) {
     const errText = await res.text();
-    console.warn(`Google Places 查詢失敗（"${textQuery}"，${res.status}）：${errText.slice(0, 200)}`);
-    return [];
+    const msg = `Google Places 查詢失敗（"${textQuery}"，${res.status}）：${errText.slice(0, 300)}`;
+    console.warn(msg);
+    return { places: [], error: msg };
   }
   const data = await res.json();
-  return Array.isArray(data.places) ? data.places : [];
+  return { places: Array.isArray(data.places) ? data.places : [], error: null };
 }
 
 exports.handler = async (event) => {
@@ -144,17 +145,26 @@ exports.handler = async (event) => {
       for (const kind of kinds) {
         const textQuery = kind === 'attraction' ? `${city} 景點` : `${city} 美食 餐廳`;
         tasks.push(
-          searchOneQuery(textQuery, apiKey).then((list) => list.map((raw) => normalizeSpot(raw, kind, region, apiKey)).filter(Boolean))
+          searchOneQuery(textQuery, apiKey).then((r) => ({
+            spots: r.places.map((raw) => normalizeSpot(raw, kind, region, apiKey)).filter(Boolean),
+            error: r.error,
+          }))
         );
       }
     }
-    const merged = (await Promise.all(tasks)).flat();
+    const taskResults = await Promise.all(tasks);
+    const merged = taskResults.flatMap((r) => r.spots);
+    const errors = taskResults.map((r) => r.error).filter(Boolean);
 
     // 用 id 去重（不同查詢字串可能搜到同一個地點）
     const seen = new Set();
     const results = merged.filter((s) => (seen.has(s.id) ? false : (seen.add(s.id), true)));
 
-    return { statusCode: 200, headers, body: JSON.stringify({ region, count: results.length, spots: results }) };
+    // 沒有任何一個查詢成功、結果又是空的：這代表整批都出錯了（金鑰/帳單/權限問題），
+    // 把第一則錯誤原文一起回傳，方便直接在瀏覽器 fetch 看到真正原因，不用去 Netlify 後台翻 log
+    const debugError = results.length === 0 && errors.length ? errors[0] : null;
+
+    return { statusCode: 200, headers, body: JSON.stringify({ region, count: results.length, spots: results, debugError }) };
   } catch (err) {
     return { statusCode: 502, headers, body: JSON.stringify({ error: 'Google Places API 呼叫失敗：' + err.message }) };
   }
