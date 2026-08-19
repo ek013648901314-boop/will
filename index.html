@@ -710,6 +710,7 @@ const state = {
   activeView:'explore',
   persona:null,      // 旅遊人格 key，見 PERSONAS
   pendingAIRequest:null, // AI 助手問完「幾點出發」前，暫存已解析出的地區/標籤/人數等，等使用者回覆時間後才繼續
+  chatHistory:[],   // 傳給真實 Claude API 的對話上下文（{role,content}[]）；後端沒設定金鑰時不會用到
 };
 
 /* =========================================================================
@@ -1623,9 +1624,52 @@ function askDepartureTime(parsed){
   });
 }
 
+// 真正的入口：先把使用者訊息顯示出來，再嘗試呼叫後端的真實 Claude API；
+// 後端還沒設定 ANTHROPIC_API_KEY（或呼叫失敗、離線）時，安靜地退回原本的規則式關鍵字解析，
+// 讓網站在金鑰設定好之前也不會壞掉。
 function handleAIQuery(text){
   addChatMsg('user', text.replace(/</g,'&lt;'));
+  callAIChatBackend(text);
+}
 
+async function callAIChatBackend(text){
+  try{
+    const res = await fetch('/.netlify/functions/ai-chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ message:text, history:state.chatHistory }),
+    });
+    if(res.status===501){
+      // 金鑰尚未設定：這是預期中的狀態（正式串接前），直接退回本機規則式解析，不用印錯誤嚇使用者
+      handleAIQueryLocalFallback(text);
+      return;
+    }
+    if(!res.ok) throw new Error('後端回應狀態 '+res.status);
+    const data = await res.json();
+
+    state.chatHistory.push({role:'user', content:text});
+    state.chatHistory.push({role:'assistant', content:data.reply});
+
+    addChatMsg('bot', String(data.reply||'').replace(/</g,'&lt;').replace(/\n/g,'<br>'));
+
+    if(data.tripReady && typeof data.startMinutes==='number'){
+      presentVariants({
+        regions: data.regions||[],
+        tags: data.tags||[],
+        days: data.days||1,
+        people: data.people||2,
+        startMinutes: data.startMinutes,
+      });
+    }
+  }catch(err){
+    console.warn('真實 AI 後端呼叫失敗，改用本機規則式解析：', err.message);
+    handleAIQueryLocalFallback(text);
+  }
+}
+
+// 本機規則式關鍵字解析（原本的 Demo 邏輯）：只在後端真實 AI 還沒設定金鑰、或呼叫失敗時才會用到，
+// 確保網站隨時都能運作，不會因為串接真實 API 而變得更脆弱。
+function handleAIQueryLocalFallback(text){
   if(state.pendingAIRequest){
     const t = parseStartTime(text);
     if(t!==null){
