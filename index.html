@@ -714,6 +714,9 @@ const state = {
   pendingAIRequest:null, // AI 助手問完「幾點出發」前，暫存已解析出的地區/標籤/人數等，等使用者回覆時間後才繼續
   chatHistory:[],   // 傳給真實 Claude API 的對話上下文（{role,content}[]）；後端沒設定金鑰時不會用到
   aiBusy:false,     // 是否有一則 AI 訊息還在等後端回覆，避免重疊送出造成對話上下文錯亂
+  realSpots:[],               // 已抓到的 Google Places 真實地點（累積各地區抓過的結果）
+  realSpotsLoadedRegions:new Set(), // 已經成功嘗試抓取過（含金鑰未設定/失敗）的地區，避免每次篩選都重打 API
+  realSpotsLoading:new Set(), // 正在抓取中的地區，用來顯示載入中提示
 };
 
 /* =========================================================================
@@ -728,7 +731,7 @@ function haversine(a,b){
   return 2*R*Math.asin(Math.sqrt(h));
 }
 function isIslandRegion(region){ return !!region && region.startsWith('離島'); }
-function spotById(id){ return SPOTS.find(s=>s.id===id); }
+function spotById(id){ return SPOTS.find(s=>s.id===id) || state.realSpots.find(s=>s.id===id); }
 function starStr(r){ return '★'.repeat(Math.round(r)) + ' ' + r.toFixed(1); }
 function authBadgeClass(level){ return level==='high'?'auth-high':level==='mid'?'auth-mid':'auth-low'; }
 function authBadgeLabel(level){ return level==='high'?'🟢 可信':level==='mid'?'🟡 需留意':'🔴 疑似灌水'; }
@@ -804,19 +807,58 @@ function setPeople(v){
 
 function refreshFilters(){
   initSidebar(); // re-render chip states
+  // 只鎖定單一地區時，才去抓該地區的 Google 真實資料——地區沒選或選多個時，範圍太廣不適合一次全部打 API
+  if(state.regions.size===1) fetchRealSpotsForRegion([...state.regions][0]);
   renderCardList();
   renderMapMarkers();
 }
 
+// 把「已經成功抓到真實資料」的地區，用真實資料取代該地區的 demo 資料；其他地區維持顯示 demo 資料。
+// 這樣同一批卡片不會真假資料混雜、分不清楚。
+function combinedSpots(){
+  const realRegions = new Set(state.realSpots.map(s=>s.region));
+  const demoPart = SPOTS.filter(s=>!realRegions.has(s.region));
+  return [...demoPart, ...state.realSpots];
+}
+
 function filteredSpots(){
-  return SPOTS.filter(s=>{
+  return combinedSpots().filter(s=>{
     if(state.search && !(s.name.toLowerCase().includes(state.search) || s.desc.toLowerCase().includes(state.search))) return false;
     if(state.regions.size && !state.regions.has(s.region)) return false;
     if(state.types.size && !state.types.has(s.type)) return false;
-    if(state.tags.size && ![...state.tags].every(t=>s.tags.includes(t))) return false;
-    if(s.auth.score < state.minAuth) return false;
+    if(state.tags.size && ![...state.tags].every(t=>(s.tags||[]).includes(t))) return false;
+    // 可信度篩選是針對 demo 資料的模擬評論真偽分數，Google 真實資料（s.auth 不存在）沒有這個概念，一律不受此篩選影響
+    if(state.minAuth && s.auth && s.auth.score < state.minAuth) return false;
     return true;
   });
+}
+
+// 向後端查詢某地區的 Google Places 真實地點，成功就併入 state.realSpots（會自動取代該地區的 demo 卡片）。
+// 金鑰還沒設定（501）或查詢失敗時，安靜地維持顯示 demo 資料，不會讓畫面壞掉。
+async function fetchRealSpotsForRegion(region){
+  if(state.realSpotsLoadedRegions.has(region) || state.realSpotsLoading.has(region)) return;
+  state.realSpotsLoading.add(region);
+  renderCardList(); // 顯示「抓取中」提示
+  try{
+    const res = await fetch(`/.netlify/functions/places-search?region=${encodeURIComponent(region)}`);
+    if(res.status===501){
+      state.realSpotsLoadedRegions.add(region); // 金鑰未設定，標記已嘗試過，避免每次切篩選都重打
+      return;
+    }
+    if(!res.ok) throw new Error('後端回應狀態 '+res.status);
+    const data = await res.json();
+    if(Array.isArray(data.spots) && data.spots.length){
+      state.realSpots.push(...data.spots);
+    }
+    state.realSpotsLoadedRegions.add(region);
+  }catch(err){
+    console.warn(`地區「${region}」的 Google 真實地點資料抓取失敗，維持顯示 demo 資料：`, err.message);
+    // 不加入 loadedRegions，讓使用者下次重新選這個地區時可以自動重試
+  }finally{
+    state.realSpotsLoading.delete(region);
+    renderCardList();
+    renderMapMarkers();
+  }
 }
 
 /* =========================================================================
@@ -824,6 +866,12 @@ function filteredSpots(){
    ========================================================================= */
 function spotCardHTML(s){
   const inItin = state.itinerary.includes(s.id);
+  const isReal = s.source==='google';
+  const authBadgeHTML = isReal
+    ? `<span class="auth-badge" style="background:#e8f0fe;color:#1a56db;">🔵 Google 即時資料</span>`
+    : `<span class="auth-badge ${authBadgeClass(s.auth.level)}">${authBadgeLabel(s.auth.level)}</span>`;
+  const starsHTML = s.rating!=null ? starStr(s.rating) : '尚無評分';
+  const reviewsHTML = s.reviews!=null ? s.reviews.toLocaleString()+' 則評論' : '尚無評論資料';
   return `
   <div class="spot-card" data-id="${s.id}">
     <div class="row1">
@@ -831,22 +879,26 @@ function spotCardHTML(s){
         <span class="type-icon">${TYPE_META[s.type].icon}</span>
         <span class="name">${s.name}</span>
       </div>
-      <span class="auth-badge ${authBadgeClass(s.auth.level)}">${authBadgeLabel(s.auth.level)}</span>
+      ${authBadgeHTML}
     </div>
-    <div class="meta"><span class="stars">${starStr(s.rating)}</span> · ${s.reviews.toLocaleString()} 則評論 · ${s.region} · ${s.price}</div>
+    <div class="meta"><span class="stars">${starsHTML}</span> · ${reviewsHTML} · ${s.region} · ${s.price||'—'}</div>
     <div class="tags">
-      ${s.tags.map(t=>`<span class="mini-tag">${TAG_META[t].icon} ${TAG_META[t].label}</span>`).join('')}
+      ${(s.tags||[]).filter(t=>TAG_META[t]).map(t=>`<span class="mini-tag">${TAG_META[t].icon} ${TAG_META[t].label}</span>`).join('')}
     </div>
     <div class="card-actions">
       <button class="btn btn-primary itin-toggle ${inItin?'added':''}" data-id="${s.id}">${inItin?'✓ 已加入行程':'+ 加入行程'}</button>
-      <button class="btn btn-ghost detail-btn" data-id="${s.id}">查看評論真偽分析</button>
+      <button class="btn btn-ghost detail-btn" data-id="${s.id}">${isReal?'查看詳細資訊':'查看評論真偽分析'}</button>
     </div>
   </div>`;
 }
 
 function renderCardList(){
   const spots = filteredSpots();
-  document.getElementById('resultCount').textContent = `共 ${spots.length} 個地點`;
+  const activeRegion = state.regions.size===1 ? [...state.regions][0] : null;
+  const loading = activeRegion && state.realSpotsLoading.has(activeRegion);
+  document.getElementById('resultCount').textContent = loading
+    ? `共 ${spots.length} 個地點（🔄 正在抓取 Google 真實資料…）`
+    : `共 ${spots.length} 個地點`;
   const listEl = document.getElementById('cardList');
   listEl.innerHTML = spots.length ? spots.map(spotCardHTML).join('') : `<div class="empty-hint">找不到符合條件的地點，試試調整篩選條件 🙂</div>`;
   listEl.querySelectorAll('.itin-toggle').forEach(btn=>{
@@ -985,30 +1037,59 @@ function renderReviewExplorer(s){
 
 function openDetail(id){
   const s = spotById(id);
-  const groupWarn = state.people > s.groupMax
+  const isReal = s.source==='google';
+  const groupWarn = (!isReal && state.people > s.groupMax)
     ? `<div class="group-warn">⚠️ 目前設定 ${state.people} 人同行，此地點建議容納人數為 ${s.groupMax} 人以內，建議事先電話確認或分批前往。</div>` : '';
-  const suit = todaySuitability(s);
+  const suit = isReal ? null : todaySuitability(s);
   const suitHTML = suit ? `<div class="group-warn" style="background:${suit.good?'#e5f6ec':'#fdf3dd'};color:${suit.good?'var(--good)':'#8a6710'};">${suit.good?'🟢 今天適合去':'🟡 今天要留意'}：${suit.reasons.join('；')}（示範模擬，非即時氣象／海況資料）</div>` : '';
-  const reasonsHTML = s.auth.reasons.map(r=>`<li>${r.ok?'✅':'⚠️'} ${r.text}</li>`).join('');
+
+  let infoSectionHTML;
+  if(isReal){
+    // 真實資料沒有評論真偽分析（Google 官方 API 不提供、也不應該假造），改顯示 Google 提供的真實地址／電話／營業時間
+    const hoursHTML = (s.openHours && s.openHours.length)
+      ? `<ul class="reason-list">${s.openHours.map(h=>`<li>🕒 ${h}</li>`).join('')}</ul>`
+      : `<div style="font-size:12px;color:var(--ink-400);">Google 尚未提供這個地點的詳細營業時間</div>`;
+    infoSectionHTML = `
+      <div class="auth-box">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <span class="auth-badge" style="background:#e8f0fe;color:#1a56db;">🔵 Google 即時資料</span>
+          <span style="font-size:11.5px;color:var(--ink-400);">地址／電話／營業時間為即時真實資料，非模擬展示</span>
+        </div>
+        ${s.address?`<div style="font-size:13px;margin-bottom:6px;">📍 ${s.address}</div>`:''}
+        ${s.phone?`<div style="font-size:13px;margin-bottom:6px;">📞 ${s.phone}</div>`:''}
+        ${s.openNow!=null?`<div style="font-size:13px;margin-bottom:8px;">${s.openNow?'🟢 目前營業中':'🔴 目前非營業時間'}</div>`:''}
+        ${hoursHTML}
+      </div>`;
+  } else {
+    const reasonsHTML = s.auth.reasons.map(r=>`<li>${r.ok?'✅':'⚠️'} ${r.text}</li>`).join('');
+    infoSectionHTML = `
+      <div class="auth-box">
+        <div class="score-line">
+          <div class="auth-score-num" style="color:${s.auth.level==='high'?'var(--good)':s.auth.level==='mid'?'var(--warn)':'var(--bad)'}">${s.auth.score}</div>
+          <div>
+            <div class="auth-badge ${authBadgeClass(s.auth.level)}">${authBadgeLabel(s.auth.level)}</div>
+            <div style="font-size:11.5px;color:var(--ink-400);margin-top:3px;">AI 評論真偽綜合評分（模擬邏輯：時間分布／用詞多樣性／帳號行為／評分情緒一致性）</div>
+          </div>
+        </div>
+        <ul class="reason-list">${reasonsHTML}</ul>
+      </div>
+      ${renderReviewExplorer(s)}`;
+  }
+
+  const pictureHTML = s.picture ? `<img src="${s.picture}" alt="${s.name}" style="width:100%;max-height:220px;object-fit:cover;border-radius:12px;margin-bottom:12px;">` : '';
+  const starsHTML = s.rating!=null ? starStr(s.rating) : '尚無評分';
+  const reviewsHTML = s.reviews!=null ? s.reviews.toLocaleString()+' 則評論' : '尚無評論資料';
+
   document.getElementById('modalBody').innerHTML = `
     <button class="modal-close" id="modalCloseBtn">✕</button>
     <h2>${TYPE_META[s.type].icon} ${s.name}</h2>
-    <div class="modal-meta"><span class="stars">${starStr(s.rating)}</span> · ${s.reviews.toLocaleString()} 則評論 · ${s.region} · ${s.price}</div>
-    <div class="tags" style="margin-bottom:12px;">${s.tags.map(t=>`<span class="mini-tag">${TAG_META[t].icon} ${TAG_META[t].label}</span>`).join('')}</div>
+    <div class="modal-meta"><span class="stars">${starsHTML}</span> · ${reviewsHTML} · ${s.region} · ${s.price||'—'}</div>
+    <div class="tags" style="margin-bottom:12px;">${(s.tags||[]).filter(t=>TAG_META[t]).map(t=>`<span class="mini-tag">${TAG_META[t].icon} ${TAG_META[t].label}</span>`).join('')}</div>
     ${groupWarn}
     ${suitHTML}
+    ${pictureHTML}
     <div class="desc">${s.desc}</div>
-    <div class="auth-box">
-      <div class="score-line">
-        <div class="auth-score-num" style="color:${s.auth.level==='high'?'var(--good)':s.auth.level==='mid'?'var(--warn)':'var(--bad)'}">${s.auth.score}</div>
-        <div>
-          <div class="auth-badge ${authBadgeClass(s.auth.level)}">${authBadgeLabel(s.auth.level)}</div>
-          <div style="font-size:11.5px;color:var(--ink-400);margin-top:3px;">AI 評論真偽綜合評分（模擬邏輯：時間分布／用詞多樣性／帳號行為／評分情緒一致性）</div>
-        </div>
-      </div>
-      <ul class="reason-list">${reasonsHTML}</ul>
-    </div>
-    ${renderReviewExplorer(s)}
+    ${infoSectionHTML}
     <button class="btn btn-primary itin-toggle" data-id="${s.id}" style="width:100%;padding:10px;">${state.itinerary.includes(s.id)?'✓ 已加入行程':'+ 加入行程'}</button>
   `;
   document.getElementById('modalBackdrop').classList.add('open');
@@ -1069,7 +1150,8 @@ function renderMapMarkers(){
     const m = L.circleMarker([s.lat,s.lng], {
       radius:7, color:'#fff', weight:2, fillColor:typeColor(s.type), fillOpacity:0.95
     }).addTo(markerLayer);
-    m.bindPopup(`<b>${s.name}</b><br>${starStr(s.rating)} · ${s.region}<br>${authBadgeLabel(s.auth.level)}`);
+    const popupAuth = s.source==='google' ? '🔵 Google 即時資料' : authBadgeLabel(s.auth.level);
+    m.bindPopup(`<b>${s.name}</b><br>${s.rating!=null?starStr(s.rating):'尚無評分'} · ${s.region}<br>${popupAuth}`);
     m.on('click', ()=>openDetail(s.id));
   });
 }

@@ -43,6 +43,34 @@ const REGION_TO_CITIES = {
   '離島-其他': ['綠島', '蘭嶼'],
 };
 
+// Google Places 的 types 欄位（例如 tourist_attraction、cafe、park...）拿來粗略對應這個 App 原本
+// demo 資料手工標註的風格標籤。這是「盡量猜」而非精準分類——Google 不會告訴我們一個景點是不是
+// 適合寵物或適合長輩，只能靠地點類型做合理推測，跟 demo 資料的人工標註品質沒辦法比。
+const TYPE_TO_TAGS = {
+  tourist_attraction: ['igphoto'],
+  museum: ['igphoto'],
+  art_gallery: ['igphoto', 'couple'],
+  park: ['adventure', 'free'],
+  natural_feature: ['adventure', 'free'],
+  hiking_area: ['adventure', 'free'],
+  national_park: ['adventure', 'free'],
+  amusement_park: ['kid', 'friends'],
+  zoo: ['kid'],
+  aquarium: ['kid'],
+  spa: ['couple'],
+  night_club: ['friends'],
+  bar: ['friends'],
+  cafe: ['couple', 'igphoto'],
+  bakery: ['foodie'],
+  restaurant: ['foodie'],
+};
+function guessTagsFromTypes(types) {
+  const tags = new Set();
+  (types || []).forEach((t) => (TYPE_TO_TAGS[t] || []).forEach((tag) => tags.add(tag)));
+  if (!tags.size) tags.add('friends'); // 完全猜不到就給一個最不會出錯的通用標籤，避免篩選時整個消失
+  return [...tags];
+}
+
 function priceLevelToText(level) {
   const map = {
     PRICE_LEVEL_FREE: '免費',
@@ -68,10 +96,11 @@ function normalizeSpot(raw, kind, region, apiKey) {
     ? `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=480&key=${apiKey}`
     : null;
 
+  const isRestaurant = kind === 'restaurant';
   return {
     id: 'gp-' + (raw.id || `${kind}-${lat}-${lng}`),
     name,
-    type: kind === 'restaurant' ? 'restaurant' : 'attraction',
+    type: isRestaurant ? 'restaurant' : 'attraction',
     region,
     lat: Number(lat),
     lng: Number(lng),
@@ -84,6 +113,9 @@ function normalizeSpot(raw, kind, region, apiKey) {
     price: priceLevelToText(raw.priceLevel),
     desc: desc ? String(desc).slice(0, 300) : '（Google Places 目前沒有提供這個地點的簡介文字）',
     picture: pictureUrl,
+    tags: guessTagsFromTypes(raw.types), // 粗略猜測，不是人工標註，前端會標示「推測標籤」
+    dur: isRestaurant ? 60 : 90, // Google 沒有提供建議停留時間，用跟 demo 資料同樣的合理預設值概算
+    meal: isRestaurant ? ['lunch', 'dinner'] : undefined, // 沒有精準營業時段資料，先給一個保守通用預設
     source: 'google', // 前端用這個欄位分辨「真實資料」跟「demo 模擬資料」，決定要不要顯示評論真偽分析區塊
   };
 }
