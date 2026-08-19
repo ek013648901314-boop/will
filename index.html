@@ -44,7 +44,7 @@
     --safe-r:env(safe-area-inset-right,0px);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-  html,body{height:100%;overscroll-behavior-y:none;}
+  html,body{height:100%;overscroll-behavior-y:none;overflow-x:hidden;} /* 保險絲：避免任一元件排版失誤時，整頁被拖出水平捲動 */
   body{
     margin:0;
     font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
@@ -415,7 +415,7 @@
   </header>
 
   <div class="disclaimer">
-    ⚠️ 這是功能原型（Demo）：地點、評論、真偽分數與交通時間皆為<b>模擬展示資料</b>，非即時真實資訊。正式版將串接 Google Places／Directions API 與真實語言模型服務。
+    <span>⚠️ 這是功能原型（Demo）：地點、評論、真偽分數與交通時間皆為<b>模擬展示資料</b>，非即時真實資訊。正式版將串接 Google Places／Directions API 與真實語言模型服務。</span>
   </div>
 
   <main class="views">
