@@ -248,6 +248,10 @@ exports.handler = async (event) => {
   if (params.mode === 'nearby') {
     return handleNearby(params, apiKey, headers);
   }
+  // mode=geocode：把使用者輸入的任意地名/地址即時定位成經緯度座標（用在「出發地」支援任意地址）。
+  if (params.mode === 'geocode') {
+    return handleGeocode(params, apiKey, headers);
+  }
 
   const region = params.region;
   const type = params.type; // 'attraction' | 'restaurant' | undefined(both)
