@@ -59,12 +59,28 @@ ${REGION_TABLE_TEXT}
 如果使用者只講了籠統的地區（例如單純說「南部」、「想去海邊」），destination_hint 填 null。
 
 如果使用者還沒說出發時間，trip_ready 設為 false，並在 reply 裡自然地追問幾點出發（可以順便建議幾個選項，例如上午9點、中午12點）。
-如果資訊足夠（至少有出發時間），trip_ready 設為 true，reply 簡短說明你理解成什麼、即將提供路線方案。
+
+如果資訊足夠（至少有出發時間），trip_ready 設為 true，這時候你「一定要」自己排出具體的每日行程放進 itinerary_plan——
+不要只回傳籠統的地區/標籤讓系統用死板的規則亂猜。你受過大量真實台灣旅遊資訊的訓練，知道實際上大家去某個地方
+通常會怎麼安排（先去哪、順路去哪、中午在哪一帶吃飯合理、下午安排什麼、晚上在哪吃晚餐），請發揮這個知識來排：
+
+- itinerary_plan.days 是一個陣列，每個元素代表一天，裡面的 stops 依照「你建議實際造訪的順序」排列（不用管地理最佳化，
+  你自己排的順序就會被拿去用，系統不會再重新排序，所以你的順序要合理：同一天的地點盡量順路、不要來回亂跳）。
+- 每個 stop 要有 name（具體、真實、Google 地圖查得到的正式名稱，例如「駁二藝術特區」「度小月擔仔麵」，
+  不要用「附近的咖啡廳」這種模糊描述）跟 type（attraction 景點 或 restaurant 餐廳）。
+- 每天的行程要有合理步調：通常安排 2-4 個景點/餐廳，含至少一餐（如果那天有涵蓋到用餐時段的話），
+  不要塞超過一個人一天玩得完的量，也不要太空。
+- 地點要落在使用者要去的地區/地名範圍內（參考上面判斷出的 regions/destination_hint），
+  且如果知道使用者的出發地，第一天第一站應該是從出發地出發合理能到的地方，不要一開始就跳到很遠的地方。
+- 如果使用者要求的天數內容明顯塞不下（例如範圍太大、天數太少），可以自行調整成更合理的天數，
+  在 reply 裡老實說明你為什麼調整。
+- 如果完全沒辦法排出合理行程（例如地區資訊不足），itinerary_plan 可以留 null，系統會用備用方式處理。
+
 一定要呼叫 respond_to_traveler 這個工具來回覆，不要用純文字回答。`;
 
 const TOOL_DEF = {
   name: 'respond_to_traveler',
-  description: '回覆旅客訊息，並在資訊足夠時附上結構化的行程需求，讓系統可以據此產生路線方案。',
+  description: '回覆旅客訊息，並在資訊足夠時附上結構化的行程需求與具體的每日行程建議，讓系統可以據此產生路線。',
   input_schema: {
     type: 'object',
     properties: {
@@ -79,6 +95,33 @@ const TOOL_DEF = {
       start_minutes: {
         type: ['number', 'null'],
         description: '出發時間，用「當天午夜過後的分鐘數」表示，例如 09:30 = 570。還不知道就填 null。',
+      },
+      itinerary_plan: {
+        type: ['object', 'null'],
+        description: 'trip_ready=true 時，你根據自己對台灣旅遊的知識排出的具體每日行程；資訊不足時填 null。',
+        properties: {
+          days: {
+            type: 'array',
+            description: '每天的行程，依照建議造訪順序排列的每日陣列。',
+            items: {
+              type: 'object',
+              properties: {
+                stops: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string', description: '具體真實的地點名稱（景點或餐廳），Google 地圖查得到的正式名稱。' },
+                      type: { type: 'string', enum: ['attraction', 'restaurant'] },
+                    },
+                    required: ['name', 'type'],
+                  },
+                },
+              },
+              required: ['stops'],
+            },
+          },
+        },
       },
     },
     required: ['reply', 'trip_ready'],
@@ -131,7 +174,7 @@ exports.handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 1024,
+        max_tokens: 2048,
         system: SYSTEM_PROMPT,
         messages,
         tools: [TOOL_DEF],
@@ -167,6 +210,7 @@ exports.handler = async (event) => {
         startMinutes: typeof toolUse.input.start_minutes === 'number' ? toolUse.input.start_minutes : null,
         departure: toolUse.input.departure || null,
         destinationHint: toolUse.input.destination_hint || null,
+        itineraryPlan: toolUse.input.itinerary_plan || null,
       }),
     };
   } catch (err) {

@@ -738,6 +738,8 @@ const state = {
   chatHistory:[],   // 傳給真實 Claude API 的對話上下文（{role,content}[]）；後端沒設定金鑰時不會用到
   aiBusy:false,     // 是否有一則 AI 訊息還在等後端回覆，避免重疊送出造成對話上下文錯亂
   days:1,           // 行程天數（手動規劃預設 1 天；AI 規劃選方案後會依對話內容自動帶入）
+  claudePlanOrder:null,     // Claude 直接排定的地點順序（套用後鎖定，不會再被最近鄰演算法重新排序）
+  claudePlanDayCounts:null, // 對應 claudePlanOrder 的每日地點數量（例如 [4,3]），用來照 Claude 排定的分天顯示
   realSpots:[],               // 已抓到的 Google Places 真實地點（累積各地區抓過的結果）
   realSpotsLoadedRegions:new Set(), // 已經成功嘗試抓取過（含金鑰未設定/失敗）的地區，避免每次篩選都重打 API
   realSpotsLoading:new Set(), // 正在抓取中的地區，用來顯示載入中提示
@@ -1492,23 +1494,35 @@ const DAY_END_CAP_LATE = 23*60+30;  // 23:30，有勾選宵夜時可以晚一點
 // 切天邏輯用「試排、太晚就少排一個再重試」的方式，直接拿 buildSingleDayTimetable（含用餐時段安插、
 // 前往用餐地點的來回繞路）這個真正會拿來顯示的引擎當作判斷依據，而不是另外寫一套粗略估算——
 // 粗略估算沒辦法算進「繞去吃飯」這種來回路程，容易低估，導致實際排出來的時間比預期晚很多（甚至排到半夜）。
-function buildMultiDayItinerary(order, dep, startMinutes, includeLateNight){
+// fixedDayCounts（可選）：每天各要排幾個地點的固定陣列，例如 [4,3]。
+// 用在「Claude 已經自己排好每日行程」的情境——這種情況下不應該再用試排/少排一個重試的方式重新切天，
+// Claude 給的分天方式本身就是建議結果，系統只需要照著算出實際時間，不要再自作主張調整分天。
+// 沒給這個參數時維持原本「試排、太晚就少排一個再重試」的自動切天邏輯。
+function buildMultiDayItinerary(order, dep, startMinutes, includeLateNight, fixedDayCounts){
   const cap = includeLateNight ? DAY_END_CAP_LATE : DAY_END_CAP;
   const maxDays = 14; // 安全上限：避免地點分散到誇張程度時無限增加天數
   const usedIds = new Set(); // 跨天共用，避免不同天被重複推薦同一間餐廳
   const days = [];
   let remaining = order.slice();
   let dayStart = dep;
+  let fixedIdx = 0;
 
   while(remaining.length && days.length < maxDays){
-    let chunkSize = remaining.length;
-    let tt, usedIdsTrial;
-    // 從「剩下全部」開始試排，超過當天時間上限就少排一個地點再重試，直到符合上限（或只剩一個地點沒得再減）
-    while(true){
+    let chunkSize, tt, usedIdsTrial;
+    if(fixedDayCounts){
+      chunkSize = Math.min(fixedDayCounts[fixedIdx] || remaining.length, remaining.length);
+      fixedIdx++;
       usedIdsTrial = new Set(usedIds);
       tt = buildSingleDayTimetable(remaining.slice(0, chunkSize), dayStart, startMinutes, includeLateNight, usedIdsTrial);
-      if(tt.endClock <= cap || chunkSize<=1) break;
-      chunkSize--;
+    } else {
+      chunkSize = remaining.length;
+      // 從「剩下全部」開始試排，超過當天時間上限就少排一個地點再重試，直到符合上限（或只剩一個地點沒得再減）
+      while(true){
+        usedIdsTrial = new Set(usedIds);
+        tt = buildSingleDayTimetable(remaining.slice(0, chunkSize), dayStart, startMinutes, includeLateNight, usedIdsTrial);
+        if(tt.endClock <= cap || chunkSize<=1) break;
+        chunkSize--;
+      }
     }
     usedIdsTrial.forEach(id=>usedIds.add(id));
     const chunk = remaining.slice(0, chunkSize);
@@ -1614,11 +1628,29 @@ async function fetchRoadRouteViaOSRM(points){
   };
 }
 
+// 把目前的 state.itinerary（已經是 Claude 排定的順序）直接轉成 planRoute() 相容的格式，不重新排序，
+// 只補上每一段的直線距離／是否跨島資訊（沿用跟 planRoute 一樣的邏輯），供後面的道路路線查詢與統計使用。
+function lockedOrderFromItinerary(dep){
+  let prev = dep;
+  return state.itinerary.map(id=>{
+    const spot = spotById(id);
+    const distFromPrev = haversine(prev, spot);
+    const crossesIsland = isIslandRegion(spot.region)!==isIslandRegion(prev.region) || (isIslandRegion(spot.region) && isIslandRegion(prev.region) && spot.region!==prev.region);
+    prev = spot;
+    return {spot, distFromPrev, crossesIsland};
+  });
+}
+
 async function generateRoute(){
   if(!state.itinerary.length) return;
   const depIdx = Number(document.getElementById('departureSelect').value);
   const dep = DEPARTURES[depIdx];
-  const order = planRoute(dep, state.itinerary); // 先用直線距離做最近鄰排序，決定「去程順序」
+  // 如果目前的行程清單就是 Claude 剛剛排定的那組（順序、內容都沒被手動改過），沿用 Claude 排的順序與分天，
+  // 不要再用最近鄰演算法重新排序——那樣會打亂 Claude 已經想過的合理路線。使用者只要手動加/減過地點，
+  // 這個比對就會不吻合，自動退回原本的最近鄰自動排序，不會卡在舊的鎖定狀態。
+  const usingClaudePlan = state.claudePlanOrder && state.claudePlanOrder.length===state.itinerary.length
+    && state.claudePlanOrder.every((id,i)=>id===state.itinerary[i]);
+  const order = usingClaudePlan ? lockedOrderFromItinerary(dep) : planRoute(dep, state.itinerary); // 先用直線距離做最近鄰排序，決定「去程順序」
 
   const genBtn = document.getElementById('generateRouteBtn');
   const originalBtnText = genBtn.textContent;
@@ -1691,7 +1723,7 @@ async function generateRoute(){
   // 排不完會自動多排一天，不會硬塞成一個從早排到凌晨的超長「一天」
   const startMinutes = Number(document.getElementById('startTimeSelect').value);
   const includeLateNight = document.getElementById('enableLateNight').checked;
-  const multiDay = buildMultiDayItinerary(order, dep, startMinutes, includeLateNight);
+  const multiDay = buildMultiDayItinerary(order, dep, startMinutes, includeLateNight, usingClaudePlan ? state.claudePlanDayCounts : undefined);
 
   const resultEl = document.getElementById('routeResult');
   let html = `<h3 style="margin-bottom:4px;">建議時間表</h3>`;
@@ -2098,7 +2130,7 @@ async function callAIChatBackend(text){
     addChatMsg('bot', String(data.reply||'').replace(/</g,'&lt;').replace(/\n/g,'<br>'));
 
     if(data.tripReady && typeof data.startMinutes==='number'){
-      presentVariants({
+      const parsedReq = {
         regions: data.regions||[],
         tags: data.tags||[],
         days: data.days||1,
@@ -2106,7 +2138,12 @@ async function callAIChatBackend(text){
         startMinutes: data.startMinutes,
         departure: data.departure||null,
         destinationHint: data.destinationHint||null,
-      });
+      };
+      if(data.itineraryPlan && Array.isArray(data.itineraryPlan.days) && data.itineraryPlan.days.length){
+        presentClaudePlan(parsedReq, data.itineraryPlan);
+      } else {
+        presentVariants(parsedReq);
+      }
     }
   }catch(err){
     console.warn('真實 AI 後端呼叫失敗，改用本機規則式解析：', err.message);
@@ -2142,6 +2179,81 @@ function handleAIQueryLocalFallback(text){
   }
   parsed.startMinutes = detectedTime;
   presentVariants(parsed);
+}
+
+// Claude 直接排的每日行程：把每個 stop 名稱解析成真實 Google 地點資料，再組成時間表顯示在聊天室。
+// 跟舊的 presentVariants 不同，這裡「不會」用最近鄰演算法重新排序——Claude 給的順序跟分天本身就是
+// 建議結果，系統只負責把地點名稱轉成真實座標／星等等資料，並算出實際時間。
+async function presentClaudePlan(parsed, plan){
+  const loadingMsg = addChatMsg('bot', `🔄 正在把建議的地點對應到 Google 真實資料，稍等一下…`);
+
+  const dep = await resolveDeparture(parsed) || nearestDeparture(parsed.regions);
+  parsed.departureCoord = dep;
+  const regionHint = parsed.regions[0] || '';
+
+  const dayCounts = [];
+  const resolvedIds = [];
+  for(const day of plan.days){
+    const stops = Array.isArray(day.stops) ? day.stops : [];
+    const results = await Promise.all(stops.map(s=>
+      fetch(`/.netlify/functions/places-search?mode=find&text=${encodeURIComponent(s.name)}&type=${s.type==='restaurant'?'restaurant':'attraction'}&region=${encodeURIComponent(regionHint)}`)
+        .then(r=> r.ok ? r.json() : {found:false})
+        .then(d=> d.found ? d.spot : null)
+        .catch(()=>null)
+    ));
+    const resolvedSpots = results.filter(Boolean);
+    if(resolvedSpots.length){
+      resolvedSpots.forEach(s=>{ if(!state.realSpots.find(x=>x.id===s.id)) state.realSpots.push(s); });
+      resolvedIds.push(...resolvedSpots.map(s=>s.id));
+      dayCounts.push(resolvedSpots.length);
+    }
+  }
+
+  loadingMsg.remove();
+
+  if(!resolvedIds.length){
+    addChatMsg('bot', `這次沒能把 AI 建議的地點對應到 Google 真實資料，改用備用方案給你參考：`);
+    presentVariants(parsed);
+    return;
+  }
+
+  const order = resolvedIds.map(id=>({spot:spotById(id)}));
+  const multiDay = buildMultiDayItinerary(order, dep, parsed.startMinutes, false, dayCounts);
+  const totalDist = order.slice(1).reduce((a,l,i)=>a+haversine(order[i].spot, l.spot), haversine(dep, order[0].spot));
+
+  const dayTxt = multiDay.totalDays>1 ? `${multiDay.totalDays} 天` : '1 天';
+  let html = `幫你排了一個 <b>${dayTxt}</b> 的行程，從 <b>${dep.name}</b> 出發（真實地點資料）：<br>`;
+  html += `<div class="itin-mini"><div class="imini-card" style="flex-direction:column;align-items:stretch;gap:6px;">
+    <div style="display:flex;justify-content:space-between;width:100%;font-weight:700;"><span>🤖 AI 建議行程</span><span style="font-weight:600;color:var(--ink-600);">約 ${totalDist.toFixed(0)} km</span></div>
+    <div style="font-size:11.5px;color:var(--ink-600);line-height:1.6;">${compactTimetableSummary(multiDay)}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="quick-chip regen-plan-btn" type="button" style="font-size:11.5px;">🔄 換個安排</button>
+      <button class="add-all-btn apply-plan-btn" type="button">套用這個行程 →</button>
+    </div>
+  </div></div>`;
+
+  const div = addChatMsg('bot', html);
+  div.querySelector('.apply-plan-btn').onclick = ()=>{
+    state.itinerary = resolvedIds.slice();
+    state.claudePlanOrder = resolvedIds.slice();
+    state.claudePlanDayCounts = dayCounts.slice();
+    setPeople(parsed.people || state.people);
+    setDays(multiDay.totalDays);
+    ensureDepartureOption(dep);
+    const depIdx = DEPARTURES.findIndex(d=>d.name===dep.name);
+    document.getElementById('departureSelect').value = depIdx>=0 ? depIdx : 0;
+    document.getElementById('startTimeSelect').value = nearestStartTimeOption(parsed.startMinutes);
+    updateItinCount();
+    renderCardList(); renderStopList();
+    switchView('itinerary');
+    setTimeout(generateRoute, 100);
+    div.querySelectorAll('.apply-plan-btn,.regen-plan-btn').forEach(b=>{ b.disabled=true; });
+    div.querySelector('.apply-plan-btn').textContent = '✓ 已套用此行程';
+  };
+  div.querySelector('.regen-plan-btn').onclick = ()=>{
+    div.querySelectorAll('.apply-plan-btn,.regen-plan-btn').forEach(b=>{ b.disabled=true; });
+    handleAIQuery('這個安排我不太滿意，可以幫我換一個不同的地點組合或順序嗎？');
+  };
 }
 
 async function presentVariants(parsed){

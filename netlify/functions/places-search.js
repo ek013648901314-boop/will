@@ -177,6 +177,29 @@ async function handleGeocode(params, apiKey, headers) {
   };
 }
 
+// 把一個地點名稱解析成完整的真實地點資料（座標、星等、地址、評論等），共用 normalizeSpot() 轉換格式。
+async function handleFind(params, apiKey, headers) {
+  const text = (params.text || '').trim();
+  if (!text) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: '缺少 text 參數' }) };
+  }
+  const kind = params.type === 'restaurant' ? 'restaurant' : 'attraction';
+  const region = params.region || '';
+  const r = await searchOneQuery(`台灣 ${text}`, apiKey);
+  if (r.error) {
+    return { statusCode: 502, headers, body: JSON.stringify({ found: false, error: r.error }) };
+  }
+  const top = r.places[0];
+  if (!top) {
+    return { statusCode: 200, headers, body: JSON.stringify({ found: false }) };
+  }
+  const spot = normalizeSpot(top, kind, region, apiKey);
+  if (!spot) {
+    return { statusCode: 200, headers, body: JSON.stringify({ found: false }) };
+  }
+  return { statusCode: 200, headers, body: JSON.stringify({ found: true, spot }) };
+}
+
 // 查詢某個座標附近的真實景點／餐廳（Google Places Nearby Search，New API），
 // 用在使用者排好行程之後，「沿途還有什麼順路的地方可以去」這個功能。
 async function handleNearby(params, apiKey, headers) {
@@ -251,6 +274,11 @@ exports.handler = async (event) => {
   // mode=geocode：把使用者輸入的任意地名/地址即時定位成經緯度座標（用在「出發地」支援任意地址）。
   if (params.mode === 'geocode') {
     return handleGeocode(params, apiKey, headers);
+  }
+  // mode=find：把一個具體地點名稱（例如 Claude 建議的「駁二藝術特區」）解析成完整的真實地點資料，
+  // 用在「讓 Claude 直接排每日行程」——Claude 只給地點名稱，這裡負責把名稱轉成真正的座標/星等/地址等資料。
+  if (params.mode === 'find') {
+    return handleFind(params, apiKey, headers);
   }
 
   const region = params.region;
