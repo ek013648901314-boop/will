@@ -1910,6 +1910,39 @@ function findDepartureByText(text){
   }
   return null;
 }
+
+// 使用者講的出發地如果不在固定的出發地清單裡（例如「和美」這種鄉鎮，不是清單裡的十幾個火車站/機場之一），
+// 改用後端的即時地點定位（真實 Google 資料）把這個地名解析成實際座標，而不是硬套清單裡最接近的大站。
+async function geocodeDeparture(text){
+  if(!text) return null;
+  try{
+    const res = await fetch(`/.netlify/functions/places-search?mode=geocode&text=${encodeURIComponent(text)}`);
+    if(!res.ok) return null;
+    const data = await res.json();
+    if(!data.found) return null;
+    return {name:data.name, lat:data.lat, lng:data.lng};
+  }catch(err){
+    console.warn('出發地即時定位失敗，改用地區猜測出發點：', err.message);
+    return null;
+  }
+}
+// 把即時定位到的出發地加進出發地下拉選單（session 內暫存，不會重複加入同一個名稱）
+function ensureDepartureOption(dep){
+  if(!DEPARTURES.some(d=>d.name===dep.name)){
+    DEPARTURES.push(dep);
+    populateDepartureSelect();
+  }
+}
+// 統整「找出發地」的完整流程：固定清單優先（快，不用等網路）→ 找不到才即時定位（可能是任意地址/鄉鎮）→
+// 都沒有的話回傳 null，讓呼叫端退回用地區地理中心點去猜。
+async function resolveDeparture(parsed){
+  const fixed = findDepartureByText(parsed.departure);
+  if(fixed) return fixed;
+  if(!parsed.departure) return null;
+  const geocoded = await geocodeDeparture(parsed.departure);
+  if(geocoded) ensureDepartureOption(geocoded);
+  return geocoded;
+}
 function nearestDeparture(regions){
   if(!regions || !regions.length) return DEPARTURES[0];
   const regionSpots = SPOTS.filter(s=>regions.includes(s.region));
@@ -1939,7 +1972,7 @@ function generateRouteVariants(parsed){
   }
   if(!pool.length) pool = SPOTS.slice();
 
-  const dep = findDepartureByText(parsed.departure) || nearestDeparture(parsed.regions);
+  const dep = parsed.departureCoord || findDepartureByText(parsed.departure) || nearestDeparture(parsed.regions);
   // 完全沒有明確風格限制（單純想出去走走，沒特別要求）通常代表這趟是專程排時間出來的景點體驗之旅，行程可以排豐富一點
   const noConstraint = !explicitTags.length && !persona;
   const baseTarget = (persona ? persona.maxStops : Math.max(2, Math.round(parsed.days<1?2:parsed.days*3))) + (noConstraint?1:0);
@@ -2111,7 +2144,9 @@ function handleAIQueryLocalFallback(text){
   presentVariants(parsed);
 }
 
-function presentVariants(parsed){
+async function presentVariants(parsed){
+  // 固定清單裡沒有的出發地（例如「和美」這種鄉鎮）需要先即時定位，這段可能要等一下網路查詢
+  parsed.departureCoord = await resolveDeparture(parsed);
   const variants = generateRouteVariants(parsed);
 
   const regionTxt = parsed.regions.length? parsed.regions.join('、') : '全台';

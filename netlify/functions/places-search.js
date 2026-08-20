@@ -153,6 +153,30 @@ async function searchOneQuery(textQuery, apiKey) {
   return { places: Array.isArray(data.places) ? data.places : [], error: null };
 }
 
+// 把使用者輸入的任意地名／地址（例如「和美」「彰化縣和美鎮彰新路100號」）即時定位成經緯度座標。
+// 這是解決「出發地只能從固定的十幾個火車站/機場清單選」這個限制的關鍵——不管使用者打哪個鄉鎮、街道、
+// 甚至地標名稱，都直接問 Google 這個地名實際在哪裡，而不是硬要比對到清單裡最接近的大站。
+async function handleGeocode(params, apiKey, headers) {
+  const text = (params.text || '').trim();
+  if (!text) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: '缺少 text 參數' }) };
+  }
+  const r = await searchOneQuery(`台灣 ${text}`, apiKey); // 加「台灣」提高精準度，避免搜到國外同名地名
+  if (r.error) {
+    return { statusCode: 502, headers, body: JSON.stringify({ found: false, error: r.error }) };
+  }
+  const top = r.places[0];
+  const lat = top?.location?.latitude, lng = top?.location?.longitude;
+  if (lat == null || lng == null) {
+    return { statusCode: 200, headers, body: JSON.stringify({ found: false }) };
+  }
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({ found: true, name: top?.displayName?.text || text, lat, lng }),
+  };
+}
+
 // 查詢某個座標附近的真實景點／餐廳（Google Places Nearby Search，New API），
 // 用在使用者排好行程之後，「沿途還有什麼順路的地方可以去」這個功能。
 async function handleNearby(params, apiKey, headers) {
