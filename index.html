@@ -393,7 +393,12 @@
     .modal-close{width:34px;height:34px;font-size:17px;top:12px;right:12px;}
 
     .chat-input-row{padding-bottom:calc(14px + var(--safe-b));}
-  }
+
+    /* ---- AI 對話頁：手機上「旅遊人格」跟「快速範例」這兩排 chips 加起來會擠掉聊天記錄的顯示空間
+       （沒設 min-height:0 時，chat-log 的 flex:1 沒辦法正確縮小），乾脆手機版直接隱藏這兩排，
+       聊天室本身有把示範問句寫在上面的橫幅裡了，不靠這兩排 chips 也能上手。 ---- */
+    #personaChips, #quickChips{display:none;}
+    .chat-log{min-height:0;}
 </style>
 </head>
 <body>
@@ -415,7 +420,7 @@
   </header>
 
   <div class="disclaimer">
-    <span>⚠️ 這是功能原型（Demo）：地點、評論、真偽分數與交通時間皆為<b>模擬展示資料</b>，非即時真實資訊。正式版將串接 Google Places／Directions API 與真實語言模型服務。</span>
+    <span>⚠️ 這是互動原型：地點、AI 對話、路線規劃已<b>實際串接 Google Places／Routes API 與 Claude AI</b>；部分內容（demo 標示的示範地點、評論真偽分析）仍是模擬展示資料，非即時真實資訊，正式上線前會再全面盤點。</span>
   </div>
 
   <main class="views">
@@ -1403,7 +1408,11 @@ function buildSingleDayTimetable(dayLegs, startPoint, startMinutes, includeLateN
   const userRestaurants = dayLegs.filter(l=>l.spot.type==='restaurant').map(l=>l.spot);
 
   let clock = startMinutes;
-  let pos = {lat:startPoint.lat, lng:startPoint.lng, region:null};
+  // pos.region 用「今天第一個要去的地點」的地區當初始值（不是 null）：
+  // 這樣如果今天第一餐（例如早餐）要在抵達任何景點之前先插入，餐廳搜尋才會知道要往「今天目的地」的方向找，
+  // 而不是誤以為使用者還在出發地附近，選到一間離出發地最近、但完全不順路的餐廳（例如從彰化去墾丁，卻選到彰化早餐店）。
+  const todayRegion = dayLegs[0]?.spot?.region || null;
+  let pos = {lat:startPoint.lat, lng:startPoint.lng, region:todayRegion};
   const timeline = [{kind:'depart', time:clock, name:startPoint.name}];
   let idx = 0;
 
@@ -1422,13 +1431,15 @@ function buildSingleDayTimetable(dayLegs, startPoint, startMinutes, includeLateN
   }
 
   function insertMeal(win){
-    if(clock < win.start){
-      const idleMin = win.start - clock;
-      if(idleMin>0.5) timeline.push({kind:'idle', minutes:idleMin});
-      clock = win.start;
-    }
+    // 先找有沒有候選餐廳，找不到就不要動時鐘——舊邏輯是「不管找不找得到候選都先把時鐘跳到用餐時段開始」，
+    // 找不到餐廳時等於平白浪費掉這段時間，會讓後面的景點被硬生生拖到很晚甚至隔天凌晨才抵達。
     const candidate = findNearestRestaurant(pos, win.mealType, usedIds, userRestaurants);
     if(candidate){
+      if(clock < win.start){
+        const idleMin = win.start - clock;
+        if(idleMin>0.5) timeline.push({kind:'idle', minutes:idleMin});
+        clock = win.start;
+      }
       const travelMin = travelEstimateMinutes(pos, candidate);
       if(travelMin>0.5) timeline.push({kind:'travel', minutes:travelMin, ferry:crossesIslandBoundary(pos,candidate)});
       clock += travelMin;
@@ -1826,9 +1837,23 @@ const TAG_KEYWORDS = {
 
 function parseAIQuery(text){
   const t = text;
+
+  // 先抓「從／在 XX 出發」的出發地，並把這段文字從主要字串裡拿掉，再去判斷地區/地名——
+  // 不然像「從彰化出發」的「彰化」本身也是中部的地區關鍵字，會被誤判成使用者想去彰化玩，
+  // 導致目的地（例如南部的墾丁）被出發地所在的地區稀釋、混進一堆不相干的中部景點。
+  let departure = null;
+  // 「從X出發/出來/出門」是最明確的講法；如果沒有這種講法，退而求其次找句尾單獨的「從X」
+  // （例如「墾丁玩兩天，從彰化」這種沒接動詞、單純把出發地放在最後面的說法）。
+  let depMatch = t.match(/(?:從|由|在)([一-龥]{2,6}?)(?:出發|出來|出門)/);
+  if(!depMatch) depMatch = t.match(/從([一-龥]{2,6})[，。,]?\s*$/);
+  const tForDest = depMatch ? t.replace(depMatch[0], '') : t;
+  if(depMatch) departure = depMatch[1];
+
   let regions = [];
+  let destinationHint = null; // 使用者講的具體地名（例如「墾丁」），比地區（南部）更精確，用來把行程優先排進這個地方
   Object.entries(REGION_KEYWORDS).forEach(([region,kws])=>{
-    if(kws.some(k=>t.includes(k))) regions.push(region);
+    const hit = kws.find(k=>tForDest.includes(k));
+    if(hit){ regions.push(region); if(!destinationHint) destinationHint = hit; }
   });
   let tags = [];
   Object.entries(TAG_KEYWORDS).forEach(([tag,kws])=>{
@@ -1846,12 +1871,7 @@ function parseAIQuery(text){
   const peopleMatch = t.match(/(\d+)\s*人/);
   if(peopleMatch) people = Number(peopleMatch[1]);
 
-  // 找「從／在 XX 出發」這種講法，抓出出發地文字（找不到就是 null，呼叫端會退回用地區猜出發點）
-  let departure = null;
-  const depMatch = t.match(/(?:從|由|在)([一-龥]{2,6}?)(?:出發|出來|出門)/);
-  if(depMatch) departure = depMatch[1];
-
-  return {regions, tags, days, people, departure};
+  return {regions, tags, days, people, departure, destinationHint};
 }
 
 // 嘗試從文字裡抓出「幾點出發」，支援「早上/上午/中午/下午/晚上/傍晚 X點(半)?」與「H:MM」兩種常見講法
@@ -1926,6 +1946,10 @@ function generateRouteVariants(parsed){
   const personaBoost = s => (persona && persona.forceTag && s.tags.includes(persona.forceTag)) ? 1.4 : 1;
   const isFoodie = explicitTags.includes('foodie');
   const isKid = explicitTags.includes('kid');
+  // 使用者講的具體地名（例如「墾丁」）比地區（南部）精確很多，地名相符的地點大幅加重權重，
+  // 確保「從彰化去墾丁」這種情境會真的排進墾丁本身的景點，不會被同地區其他縣市（台南、高雄）的地點稀釋掉
+  const destHint = parsed.destinationHint;
+  const destBoost = s => (destHint && (s.name.includes(destHint) || s.region.includes(destHint))) ? 2.2 : 1;
 
   function buildVariant(label, icon, candidatePool, scoreFn, count){
     let source = candidatePool.slice().sort((a,b)=>scoreFn(b)-scoreFn(a));
@@ -1942,11 +1966,11 @@ function generateRouteVariants(parsed){
   }
 
   // 評分高、離出發地近優先，且刻意降低「戶外探險」型地點的權重（悠閒訴求），並套用旅遊人格加權
-  const relaxScore  = s => (s.rating*(s.auth.score/100) - haversine(dep,s)/300) * (s.tags.includes('adventure')?0.8:1) * personaBoost(s);
+  const relaxScore  = s => (s.rating*(s.auth.score/100) - haversine(dep,s)/300) * (s.tags.includes('adventure')?0.8:1) * personaBoost(s) * destBoost(s);
   // 帶小孩時，景點加重「戶外探險」（通常代表能跑跳消耗體力的地方，如公園/步道）權重，符合親子出遊需求
-  const scenicScore = s => s.rating * ((s.tags.includes('igphoto')||s.tags.includes('adventure'))?1.25:1) * (isKid && s.tags.includes('adventure')?1.3:1) * personaBoost(s);
+  const scenicScore = s => s.rating * ((s.tags.includes('igphoto')||s.tags.includes('adventure'))?1.25:1) * (isKid && s.tags.includes('adventure')?1.3:1) * personaBoost(s) * destBoost(s);
   // 使用者明講自己是吃貨時，美食類地點權重加重更多，讓「美食＋景點」方案能塞進更多間餐廳／甜點／下午茶
-  const foodieScore = s => s.rating * (s.tags.includes('foodie')?(isFoodie?1.6:1.3):1) * personaBoost(s);
+  const foodieScore = s => s.rating * (s.tags.includes('foodie')?(isFoodie?1.6:1.3):1) * personaBoost(s) * destBoost(s);
 
   // 三個方案各自從不同子池出發（悠閒＝不限類型／景色優先＝以景點為主／美食＋景點＝以餐廳為主，不足再從共用池補齊）
   const relaxPool  = pool;
@@ -2048,6 +2072,7 @@ async function callAIChatBackend(text){
         people: data.people||2,
         startMinutes: data.startMinutes,
         departure: data.departure||null,
+        destinationHint: data.destinationHint||null,
       });
     }
   }catch(err){

@@ -53,6 +53,11 @@ ${REGION_TABLE_TEXT}
 系統排路線時需要用這個當起點，沒抓到的話系統會亂猜出發地，導致排出來的行程從不相干的城市開始、也沒算回程時間。
 如果沒提到出發地，departure 填 null（不要瞎猜）。
 
+如果使用者提到「具體的地名/景點」而不只是籠統的地區（例如「墾丁」比「南部」精確、「九份」比「北部」精確），
+一定要把那個具體地名放進 destination_hint 欄位——這點也很重要，沒抓到的話系統只會知道大概的地區，
+排出來的行程會被同地區其他縣市的地點稀釋掉，變成「說要去墾丁，結果大部分行程在台南、高雄」。
+如果使用者只講了籠統的地區（例如單純說「南部」、「想去海邊」），destination_hint 填 null。
+
 如果使用者還沒說出發時間，trip_ready 設為 false，並在 reply 裡自然地追問幾點出發（可以順便建議幾個選項，例如上午9點、中午12點）。
 如果資訊足夠（至少有出發時間），trip_ready 設為 true，reply 簡短說明你理解成什麼、即將提供路線方案。
 一定要呼叫 respond_to_traveler 這個工具來回覆，不要用純文字回答。`;
@@ -70,6 +75,7 @@ const TOOL_DEF = {
       days: { type: 'number', description: '天數，0.5 代表半日遊，預設 1。' },
       people: { type: 'number', description: '同行人數，預設 2。' },
       departure: { type: ['string', 'null'], description: '使用者明講的出發地地名（例如「彰化」「台北車站」），沒提到就是 null，不要自己瞎猜。' },
+      destination_hint: { type: ['string', 'null'], description: '使用者提到的具體地名/景點（例如「墾丁」「九份」），比 regions 精確；只講籠統地區就是 null。' },
       start_minutes: {
         type: ['number', 'null'],
         description: '出發時間，用「當天午夜過後的分鐘數」表示，例如 09:30 = 570。還不知道就填 null。',
@@ -160,6 +166,7 @@ exports.handler = async (event) => {
         people: typeof toolUse.input.people === 'number' ? toolUse.input.people : 2,
         startMinutes: typeof toolUse.input.start_minutes === 'number' ? toolUse.input.start_minutes : null,
         departure: toolUse.input.departure || null,
+        destinationHint: toolUse.input.destination_hint || null,
       }),
     };
   } catch (err) {
