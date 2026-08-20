@@ -1567,6 +1567,52 @@ function renderTimetable(result){
   return `<div class="timetable">${rows}<div class="tt-row tt-end"><span class="tt-time">${minutesToClock(result.endClock)}</span><span class="tt-body">${endLabel}</span></div></div>`;
 }
 
+// 專門給「Claude 已經排好順序」的行程使用：單純依序把每個 stop（不分景點或餐廳）串接起來計算時間，
+// 不套用固定用餐時段/機會性餐廳搜尋那套機制——Claude 自己決定了什麼時候該吃飯、吃哪一間、排在第幾站，
+// 系統只負責照這個順序算出實際時間，不會重新安排或跳過任何一站（跟 buildSingleDayTimetable 不同，
+// 那支是給「還沒排定順序的一批景點＋一批候選餐廳」用的，餐廳只是機會性塞進固定用餐時段，不保證會出現在時間表裡，
+// 拿來處理已經排好順序的 Claude 行程會導致餐廳被跳過、且「今天最後一站」判斷錯誤）。
+function buildSequentialDayTimetable(dayStops, startPoint, startMinutes){
+  let clock = startMinutes;
+  let pos = {lat:startPoint.lat, lng:startPoint.lng};
+  const timeline = [{kind:'depart', time:clock, name:startPoint.name}];
+  dayStops.forEach(spot=>{
+    const travelMin = travelEstimateMinutes(pos, spot);
+    if(travelMin>0.5) timeline.push({kind:'travel', minutes:travelMin, ferry:crossesIslandBoundary(pos,spot)});
+    clock += travelMin;
+    const stayMin = spot.dur || (spot.type==='restaurant'?60:90);
+    if(spot.type==='restaurant'){
+      timeline.push({kind:'meal', window:{icon:'🍽️',label:'用餐'}, spot, arrive:clock, depart:clock+stayMin});
+    } else {
+      timeline.push({kind:'visit', spot, arrive:clock, depart:clock+stayMin});
+    }
+    clock += stayMin;
+    pos = spot;
+  });
+  return {timeline, endClock:clock};
+}
+// 把 Claude 排好的每日 stops（dayGroups：陣列的陣列，每個子陣列是那一天依序的真實地點）組成完整多天行程，
+// 並在最後一天結尾加上回程到出發地的時間，回傳格式跟 buildMultiDayItinerary 相容，可以共用同一套渲染函式。
+function buildItineraryFromClaudePlan(dayGroups, dep, startMinutes){
+  const days = [];
+  let dayStart = dep;
+  dayGroups.forEach((stops, i)=>{
+    const tt = buildSequentialDayTimetable(stops, dayStart, startMinutes);
+    days.push({dayIndex:i+1, timeline:tt.timeline, endClock:tt.endClock});
+    const last = stops[stops.length-1];
+    if(last) dayStart = {lat:last.lat, lng:last.lng, name:`${last.name} 附近（住宿）`};
+  });
+  if(days.length){
+    const lastDay = days[days.length-1];
+    const lastGroup = dayGroups[dayGroups.length-1];
+    const lastSpot = lastGroup.length ? lastGroup[lastGroup.length-1] : dep;
+    const returnMin = travelEstimateMinutes(lastSpot, dep);
+    lastDay.timeline.push({kind:'return', minutes:returnMin, destName:dep.name, ferry:crossesIslandBoundary(lastSpot,dep)});
+    lastDay.endClock += returnMin;
+  }
+  return {days, totalDays:days.length};
+}
+
 function renderMultiDayTimetable(multiDay){
   return multiDay.days.map(d=>{
     const label = multiDay.days.length>1 ? `<h4 style="margin:16px 0 6px;font-size:13.5px;color:var(--sea-700);border-top:1px dashed var(--line);padding-top:12px;">📅 第 ${d.dayIndex} 天</h4>` : '';
@@ -1723,7 +1769,20 @@ async function generateRoute(){
   // 排不完會自動多排一天，不會硬塞成一個從早排到凌晨的超長「一天」
   const startMinutes = Number(document.getElementById('startTimeSelect').value);
   const includeLateNight = document.getElementById('enableLateNight').checked;
-  const multiDay = buildMultiDayItinerary(order, dep, startMinutes, includeLateNight, usingClaudePlan ? state.claudePlanDayCounts : undefined);
+  let multiDay;
+  if(usingClaudePlan){
+    // Claude 排好順序的行程：依照鎖定的每日地點數量切成 dayGroups，用專門的循序時間表引擎
+    // （不套用固定用餐時段機制，餐廳就照 Claude 排定的位置直接出現，不會被跳過或排錯「今天最後一站」）
+    let idx = 0;
+    const dayGroups = state.claudePlanDayCounts.map(count=>{
+      const group = order.slice(idx, idx+count).map(l=>l.spot);
+      idx += count;
+      return group;
+    });
+    multiDay = buildItineraryFromClaudePlan(dayGroups, dep, startMinutes);
+  } else {
+    multiDay = buildMultiDayItinerary(order, dep, startMinutes, includeLateNight);
+  }
 
   const resultEl = document.getElementById('routeResult');
   let html = `<h3 style="margin-bottom:4px;">建議時間表</h3>`;
@@ -2191,6 +2250,7 @@ async function presentClaudePlan(parsed, plan){
   parsed.departureCoord = dep;
   const regionHint = parsed.regions[0] || '';
 
+  const dayGroups = [];
   const dayCounts = [];
   const resolvedIds = [];
   for(const day of plan.days){
@@ -2205,6 +2265,7 @@ async function presentClaudePlan(parsed, plan){
     if(resolvedSpots.length){
       resolvedSpots.forEach(s=>{ if(!state.realSpots.find(x=>x.id===s.id)) state.realSpots.push(s); });
       resolvedIds.push(...resolvedSpots.map(s=>s.id));
+      dayGroups.push(resolvedSpots);
       dayCounts.push(resolvedSpots.length);
     }
   }
@@ -2217,9 +2278,9 @@ async function presentClaudePlan(parsed, plan){
     return;
   }
 
-  const order = resolvedIds.map(id=>({spot:spotById(id)}));
-  const multiDay = buildMultiDayItinerary(order, dep, parsed.startMinutes, false, dayCounts);
-  const totalDist = order.slice(1).reduce((a,l,i)=>a+haversine(order[i].spot, l.spot), haversine(dep, order[0].spot));
+  const multiDay = buildItineraryFromClaudePlan(dayGroups, dep, parsed.startMinutes);
+  const flatSpots = dayGroups.flat();
+  const totalDist = flatSpots.slice(1).reduce((a,s,i)=>a+haversine(flatSpots[i], s), haversine(dep, flatSpots[0]));
 
   const dayTxt = multiDay.totalDays>1 ? `${multiDay.totalDays} 天` : '1 天';
   let html = `幫你排了一個 <b>${dayTxt}</b> 的行程，從 <b>${dep.name}</b> 出發（真實地點資料）：<br>`;
