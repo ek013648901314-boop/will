@@ -311,7 +311,9 @@
   .generate-btn:disabled{opacity:.5;}
 
   /* ---------- AI view ---------- */
-  #view-ai{display:flex;}
+  /* 這裡原本有 #view-ai{display:flex;}，用 ID 選擇器蓋掉了上面 .view/.view.active 的分頁切換機制，
+     導致 AI 對話面板不管目前分頁是不是它，永遠以 display:flex 留在畫面排版裡（疊在其他分頁下方，
+     手機上尤其會把畫面往下推、擠壓內容）。切換分頁本來就該交給 .view.active 處理，這行拿掉。 */
   .ai-wrap{max-width:760px;margin:0 auto;width:100%;display:flex;flex-direction:column;height:100%;}
   .ai-banner{
     background:linear-gradient(120deg,var(--sea-100),#fff);
@@ -536,6 +538,7 @@
 
           <div id="routeResult" style="margin-top:16px;"></div>
           <div id="nearbySuggestions" style="margin-top:8px;"></div>
+          <div id="hotelSuggestions" style="margin-top:8px;"></div>
         </div>
         <div class="itinerary-right">
           <div id="map2"></div>
@@ -1820,6 +1823,9 @@ async function generateRoute(){
 
   // 沿途順路推薦：不 await，讓主路線先顯示出來，推薦清單用自己的載入提示非同步補上，不拖慢主流程
   renderNearbySuggestions(order);
+  // 多天行程才需要找住宿；不 await，跟沿途推薦一樣非同步補上
+  if(multiDay.totalDays>1) renderHotelSuggestions(multiDay, dep);
+  else { const box=document.getElementById('hotelSuggestions'); if(box) box.innerHTML=''; }
 }
 
 document.getElementById('generateRouteBtn').addEventListener('click', generateRoute);
@@ -1898,6 +1904,54 @@ async function renderNearbySuggestions(order){
       m.on('click', ()=>openDetail(s.id));
     });
   }
+}
+
+// 過夜住宿推薦：多天行程時，每天結束（除了最後一天——最後一天是回程，不用過夜）查詢
+// 當天最後一站附近真實的住宿地點（Google Places Nearby Search，category=lodging），
+// 並附上 Booking.com 搜尋深連結（Booking.com 沒有公開的免金鑰查詢 API，這裡直接帶著地區名稱
+// 開啟搜尋結果頁，不需要另外申請 Booking.com Affiliate API 資格）。
+// 刻意不把查到的住宿併入 state.realSpots／不透過 openDetail 開卡片——那個池子是給「行程景點/餐廳」
+// 篩選瀏覽用的，混進住宿會讓左側地區/類型篩選跑出奇怪的住宿結果；住宿卡片直接連到 Google Maps 查看即可。
+async function renderHotelSuggestions(multiDay, dep){
+  const container = document.getElementById('hotelSuggestions');
+  if(!container) return;
+
+  const overnightDays = multiDay.days.slice(0, -1); // 最後一天要回出發地，不用找住宿
+  const dayAnchors = overnightDays.map((d,i)=>{
+    const lastEv = [...d.timeline].reverse().find(e=>e.kind==='visit'||e.kind==='meal');
+    return lastEv ? {dayIndex:i+1, spot:lastEv.spot} : null;
+  }).filter(Boolean);
+
+  if(!dayAnchors.length){ container.innerHTML=''; return; }
+
+  container.innerHTML = `<div style="font-size:12.5px;color:var(--ink-400);padding:8px 2px;">🔄 正在查詢過夜地點附近的住宿…</div>`;
+
+  const results = await Promise.all(dayAnchors.map(a=>
+    fetch(`/.netlify/functions/places-search?mode=nearby&category=lodging&lat=${a.spot.lat}&lng=${a.spot.lng}&radius=3000&region=${encodeURIComponent(a.spot.region||'')}`)
+      .then(r=> r.ok ? r.json() : {spots:[]})
+      .then(d=>({...a, spots:(d.spots||[]).slice(0,4)}))
+      .catch(()=>({...a, spots:[]}))
+  ));
+
+  const gmapsLink = s => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name+' '+(s.address||''))}`;
+  const bookingLink = spot => `https://www.booking.com/searchresults.zh-tw.html?ss=${encodeURIComponent('台灣 '+(spot.region||spot.name))}`;
+
+  container.innerHTML = `<h3 style="margin:14px 0 8px;font-size:14px;">🛏️ 過夜住宿參考</h3>` +
+    results.map(r=>{
+      const hotelCards = r.spots.length ? r.spots.map(s=>`
+        <a class="stop-item hotel-item" href="${gmapsLink(s)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">
+          <div class="stop-num" style="background:#8a3ffc;">🛏️</div>
+          <div>
+            <div class="stop-name">${s.name}${s.rating!=null?` · ⭐${s.rating}`:''}</div>
+            <div class="stop-tags">${s.address || r.spot.region || ''}${s.price?' · '+s.price:''}</div>
+          </div>
+        </a>`).join('') : `<div style="font-size:12px;color:var(--ink-400);padding:4px 2px 8px;">附近暫時沒有查到 Google 上的住宿資料</div>`;
+      return `<div style="margin-bottom:14px;">
+        <div style="font-size:12.5px;color:var(--sea-700);font-weight:600;margin-bottom:4px;">📅 第 ${r.dayIndex} 天結束後（${r.spot.name} 附近）</div>
+        ${hotelCards}
+        <a class="btn btn-ghost" href="${bookingLink(r.spot)}" target="_blank" rel="noopener" style="margin-top:4px;display:inline-block;">🔗 到 Booking.com 搜尋這一區的住宿</a>
+      </div>`;
+    }).join('');
 }
 
 /* =========================================================================
@@ -2188,7 +2242,9 @@ async function callAIChatBackend(text){
 
     addChatMsg('bot', String(data.reply||'').replace(/</g,'&lt;').replace(/\n/g,'<br>'));
 
-    if(data.tripReady && typeof data.startMinutes==='number'){
+    // 前端這邊也做一層把關：就算 Claude 誤判 trip_ready=true，只要沒問到出發地就不會真的產生路線
+    // （出發地沒問清楚，整條路線的準確性都會受影響，這是今天花最多力氣修的問題根源，不能再讓它悄悄發生）。
+    if(data.tripReady && typeof data.startMinutes==='number' && data.departure){
       const parsedReq = {
         regions: data.regions||[],
         tags: data.tags||[],

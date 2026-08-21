@@ -109,10 +109,11 @@ function normalizeSpot(raw, kind, region, apiKey) {
     .filter((r) => r.text);
 
   const isRestaurant = kind === 'restaurant';
+  const isLodging = kind === 'lodging';
   return {
     id: 'gp-' + (raw.id || `${kind}-${lat}-${lng}`),
     name,
-    type: isRestaurant ? 'restaurant' : 'attraction',
+    type: isLodging ? 'lodging' : (isRestaurant ? 'restaurant' : 'attraction'),
     region,
     lat: Number(lat),
     lng: Number(lng),
@@ -207,7 +208,9 @@ async function handleNearby(params, apiKey, headers) {
   if (!lat || !lng) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: '缺少或不合法的 lat/lng 參數' }) };
   }
-  const radius = Math.min(Math.max(Number(params.radius) || 700, 100), 5000); // 100m ~ 5km 之間，預設 700m
+  // category=lodging：找附近住宿（多天行程過夜點用），預設維持原本找景點/餐廳的行為
+  const isLodging = params.category === 'lodging';
+  const radius = Math.min(Math.max(Number(params.radius) || (isLodging ? 3000 : 700), 100), 8000);
   const region = params.region || '';
   const exclude = new Set((params.exclude || '').split(',').filter(Boolean));
 
@@ -220,7 +223,7 @@ async function handleNearby(params, apiKey, headers) {
         'X-Goog-FieldMask': FIELD_MASK,
       },
       body: JSON.stringify({
-        includedTypes: ['tourist_attraction', 'restaurant', 'cafe', 'museum', 'park'],
+        includedTypes: isLodging ? ['lodging'] : ['tourist_attraction', 'restaurant', 'cafe', 'museum', 'park'],
         maxResultCount: 8,
         locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius } },
         languageCode: 'zh-TW',
@@ -233,6 +236,7 @@ async function handleNearby(params, apiKey, headers) {
     const data = await res.json();
     const spots = (data.places || [])
       .map((raw) => {
+        if (isLodging) return normalizeSpot(raw, 'lodging', region, apiKey);
         const isRestaurant = (raw.types || []).some((t) => ['restaurant', 'cafe'].includes(t));
         return normalizeSpot(raw, isRestaurant ? 'restaurant' : 'attraction', region, apiKey);
       })
